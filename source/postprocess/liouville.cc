@@ -10,6 +10,48 @@
 
 namespace aspect
 {
+  //Useful utility for doing global MPI reductions on SymmetricTensor objects
+  template<int dim>
+  SymmetricTensor<2,dim> reduce_tensor(const SymmetricTensor<2,dim> &local, const MPI_Comm &mpi_communicator)
+  {
+    double entries[6] = {0,0,0,0,0,0};
+    double global_entries[6] = {0,0,0,0,0,0};
+    SymmetricTensor<2,dim> global;
+
+    for(unsigned int i=0; i<dim; ++i)
+      for(unsigned int j=0; j<=i; ++j)
+        entries[i*dim + j] = local[i][j];
+
+    MPI_Allreduce (&entries, &global_entries, 6, MPI_DOUBLE,
+                       MPI_SUM, mpi_communicator);
+
+    for(unsigned int i=0; i<dim; ++i)
+      for(unsigned int j=0; j<=i; ++j)
+        global[i][j] = global_entries[i*dim + j];
+
+    return global;
+  }
+
+  //Useful utility for doing global MPI reductions on Tensor<1,dim> objects
+  template<int dim>
+  Tensor<1,dim> reduce_vector(const Tensor<1,dim> &local, const MPI_Comm &mpi_communicator)
+  {
+    double entries[3] = {0,0,0};
+    double global_entries[3] = {0,0,0};
+    Tensor<1,dim> global;
+
+    for(unsigned int i=0; i<dim; ++i)
+      entries[i] = local[i];
+
+    MPI_Allreduce (&entries, &global_entries, 3, MPI_DOUBLE,
+                       MPI_SUM, mpi_communicator);
+
+    for(unsigned int i=0; i<dim; ++i)
+      global[i] = global_entries[i];
+ 
+    return global;
+  }
+
   namespace Postprocess
   {
     template <int dim>
@@ -102,7 +144,7 @@ namespace aspect
 
           //get the density at each quadrature point
           typename MaterialModel::Interface<dim>::MaterialModelInputs in(q_points.size(), this->n_compositional_fields());
-          typename MaterialModel::Interface<dim>::MaterialModelOutputs out(q_points.size());
+          typename MaterialModel::Interface<dim>::MaterialModelOutputs out(q_points.size(), this->n_compositional_fields());
           for(int i=0; i< q_points.size(); i++)
           {
              in.pressure[i] = fe_vals[i][dim];
