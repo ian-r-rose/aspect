@@ -14,6 +14,7 @@
 
 namespace aspect
 {
+  //Useful utility for doing global MPI reductions on SymmetricTensor objects
   template<int dim>
   SymmetricTensor<2,dim> reduce_tensor(const SymmetricTensor<2,dim> &local, const MPI_Comm &mpi_communicator)
   {
@@ -34,6 +35,8 @@ namespace aspect
 
     return global;
   }
+
+  //Useful utility for doing global MPI reductions on Tensor<1,dim> objects
   template<int dim>
   Tensor<1,dim> reduce_vector(const Tensor<1,dim> &local, const MPI_Comm &mpi_communicator)
   {
@@ -55,13 +58,16 @@ namespace aspect
   namespace GravityModel
   {
 
-    //The Centrifugal bit
+    //Need to initialize SimulatorAccess
     template <int dim>
     void Centrifugal<dim>::initialize(const Simulator<dim> &simulation)
     {
        SimulatorAccess<dim>::initialize(simulation);
     }
    
+    //Here we just return the centrifugal vector.  The idea is to compose
+    //this gravity model with others to create arbitrary gravity models
+    //including centrifugal effects.
     template <int dim>
     Tensor<1,dim>
     Centrifugal<dim>::gravity_vector (const Point<dim> &p) const
