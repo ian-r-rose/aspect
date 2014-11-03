@@ -1,4 +1,5 @@
 #include <aspect/gravity_model/centrifugal.h>
+#include <aspect/geometry_model/spherical_shell.h>
 #include <aspect/simulator.h>
 
 #include <deal.II/lac/vector.h>
@@ -207,11 +208,36 @@ namespace aspect
       if(this->get_timestep() == 0)
         angular_momentum = Tensor<1,dim>( moment_of_inertia * rotation_axis * Omega ).norm();
 
-      Omega = angular_momentum/Tensor<1,dim>(moment_of_inertia * rotation_axis).norm();
+//      Omega = angular_momentum/Tensor<1,dim>(moment_of_inertia * rotation_axis).norm();
       rotational_energy = (rotation_axis * (moment_of_inertia * rotation_axis) )*Omega*Omega;
 
       output(0);
     }
+
+    template<int dim>
+    void Centrifugal<dim>::set_omega( double omega)
+    {
+      Omega = omega;
+    }
+  
+    template<int dim>
+    double Centrifugal<dim>::get_omega() const
+    {
+      return Omega;
+    }
+
+    template<int dim>
+    std::vector<double>
+    Centrifugal<dim>::get_moments() const
+    {
+      std::vector<double> moments(dim);
+      for( unsigned int i=0; i<dim; ++i)
+        moments[i] = principal_moments[i];
+      return moments;
+    }
+      
+  
+    
 
     template<int dim>
     SymmetricTensor<2,dim> Centrifugal<dim>::compute_moment_of_inertia( bool include_density)
@@ -334,6 +360,45 @@ namespace aspect
     {
       return gravity.gravity_vector(p) + centrifugal.gravity_vector(p);
     }
+
+    template<int dim>
+    double
+    RadialWithCentrifugal<dim>::froude_number() const
+    {
+      double Omega = centrifugal.get_omega();
+      double radius;
+      double magnitude;
+      if (const GeometryModel::SphericalShell<dim> *
+          shell_geometry_model = dynamic_cast <const GeometryModel::SphericalShell<dim>*> (&this->get_geometry_model()))
+            {
+              radius = shell_geometry_model->outer_radius();
+              magnitude = gravity.gravity_vector( shell_geometry_model->representative_point(0.0) ).norm();
+            }
+      return Omega*Omega*radius/magnitude;
+    } 
+
+    template<int dim>
+    void
+    RadialWithCentrifugal<dim>::set_froude(double Fr)
+    {
+      double radius;
+      double magnitude;
+      if (const GeometryModel::SphericalShell<dim> *
+          shell_geometry_model = dynamic_cast <const GeometryModel::SphericalShell<dim>*> (&this->get_geometry_model()))
+            {
+              radius = shell_geometry_model->outer_radius();
+              magnitude = gravity.gravity_vector( shell_geometry_model->representative_point(0.0) ).norm();
+            }
+      centrifugal.set_omega( std::sqrt(Fr * magnitude / radius) );
+    } 
+
+    template<int dim>
+    std::vector<double>
+    RadialWithCentrifugal<dim>::get_moments() const
+    {
+      return centrifugal.get_moments();
+    }
+      
     template <int dim>
     void
     RadialWithCentrifugal<dim>::update()
@@ -343,6 +408,7 @@ namespace aspect
     template <int dim>
     void RadialWithCentrifugal<dim>::initialize(const Simulator<dim> &simulation)
     {
+       SimulatorAccess<dim>::initialize(simulation);
        centrifugal.initialize(simulation);
     }
   }

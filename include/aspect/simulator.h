@@ -144,6 +144,8 @@ namespace aspect
        * <code>source/simulator/core.cc</code>.
        */
       void run ();
+      
+      std::pair<double, double> compute_empirical_tidal_parameters();
 
 
       /**
@@ -1302,6 +1304,7 @@ namespace aspect
            */
           void apply_stabilization (const typename DoFHandler<dim>::active_cell_iterator &cell,
                                     FullMatrix<double> &local_matrix);
+
 
           /**
            * If a geometry model uses manifolds for the refinement behavior

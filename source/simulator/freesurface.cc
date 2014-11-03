@@ -31,6 +31,7 @@
 #include <deal.II/lac/sparsity_tools.h>
 
 #include <deal.II/numerics/vector_tools.h>
+#include <aspect/gravity_model/centrifugal.h>
 
 
 using namespace dealii;
@@ -717,14 +718,96 @@ namespace aspect
     for (; id != sim.parameters.free_surface_boundary_indicators.end(); ++id)
       sim.triangulation.set_boundary( *id );
   }
+
+  template<int dim>
+  std::pair<double, double> Simulator<dim>::compute_empirical_tidal_parameters()
+  {
+    if (parameters.free_surface_enabled == false)
+      AssertThrow(false, ExcMessage("Need to have free surface enabled to"
+                                    " compute the empirical tidal parameters"));
+
+    double love_number;
+    double relaxation_time;
+
+    GravityModel::RadialWithCentrifugal<dim> *gravity;
+    if( !dynamic_cast<GravityModel::RadialWithCentrifugal<dim>*>(gravity_model.get()) )
+    {
+      AssertThrow(false, ExcMessage("Need to have centrifugal gravity model to"
+                                    " compute the empirical tidal parameters"));
+    }
+    else
+    {
+      gravity = dynamic_cast<GravityModel::RadialWithCentrifugal<dim>*>(gravity_model.get()); 
+    }
+
+    if ( gravity->froude_number() != 0.0 )
+      AssertThrow(false, ExcMessage("Need to have zero Froude number to"
+                                    " compute the empirical tidal parameters"));
+
+     
+    //First, we need to store the current state of the system, as we will be breaking it.
+    LinearAlgebra::BlockVector stored_solution( solution );
+    LinearAlgebra::BlockVector stored_old_solution( old_solution );
+    LinearAlgebra::BlockVector stored_mesh_velocity( free_surface->mesh_velocity );
+    LinearAlgebra::Vector stored_mesh_vertices( free_surface->mesh_vertices );
+    double stored_time_step = time_step;
+    double stored_old_time_step = old_time_step;
+
+
+    double fictive_time = 0.0;
+    time_step = 0.0;
+    
+    //Turn on centrifugal effects
+    gravity->set_froude( 1.e-2 );
+
+    for( unsigned int i=0; i < 10; ++i)
+      {
+        solve_timestep();
+        gravity->update();
+        fictive_time += time_step;
+        std::vector<double> moments = gravity->get_moments();
+        pcout<<"MOMENT: "<<moments[0]<<"\tTIME: "<<fictive_time<<std::endl;
+        time_step = compute_time_step().first * 0.01;
+      }
+    
+    //Turn off centrifugal effects
+    gravity->set_froude( 0.0 );
+
+    for( unsigned int i=0; i < 10; ++i)
+      {
+        solve_timestep();
+        gravity->update();
+        fictive_time += time_step;
+        std::vector<double> moments = gravity->get_moments();
+        pcout<<"MOMENT: "<<moments[0]<<"\tTIME: "<<fictive_time<<std::endl;
+        time_step = compute_time_step().first * 0.01;
+      }
+
+    //Restore the old state
+    solution = stored_solution;
+    old_solution = stored_old_solution;
+    free_surface->mesh_velocity = stored_mesh_velocity;
+    free_surface->mesh_vertices = stored_mesh_vertices;
+    time_step = stored_time_step;
+    old_time_step = stored_old_time_step;
+//    free_surface->displace_mesh ();
+    rebuild_stokes_matrix = rebuild_stokes_preconditioner = true;
+    
+    return std::make_pair( love_number, relaxation_time );
+  }
 }
 
 
 // explicit instantiation of the functions we implement in this file
 namespace aspect
 {
-#define INSTANTIATE(dim) \
+#define INSTANTIATE_FREE_SURFACE(dim) \
   template class Simulator<dim>::FreeSurfaceHandler;
+
+  ASPECT_INSTANTIATE(INSTANTIATE_FREE_SURFACE)
+
+#define INSTANTIATE(dim) \
+  template class Simulator<dim>;
 
   ASPECT_INSTANTIATE(INSTANTIATE)
 }

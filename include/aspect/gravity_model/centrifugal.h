@@ -20,6 +20,9 @@ namespace aspect
 
         double get_rotational_energy() const;
         Tensor<1,dim> get_spin_axis() const;
+        std::vector<double> get_moments() const;
+        double get_omega() const;
+        void set_omega( double );
 
         static void declare_parameters (ParameterHandler &prm);
 
@@ -67,6 +70,10 @@ namespace aspect
         static void declare_parameters (ParameterHandler &prm);
 
         virtual void parse_parameters (ParameterHandler &prm);
+
+        void set_froude( double );
+        double froude_number() const;
+        std::vector<double> get_moments() const;
 
       private:
          Centrifugal<dim> centrifugal;
