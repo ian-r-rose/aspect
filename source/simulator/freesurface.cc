@@ -790,7 +790,7 @@ namespace aspect
     free_surface->mesh_vertices = stored_mesh_vertices;
     time_step = stored_time_step;
     old_time_step = stored_old_time_step;
-//    free_surface->displace_mesh ();
+    free_surface->displace_mesh ();
     rebuild_stokes_matrix = rebuild_stokes_preconditioner = true;
     
     return std::make_pair( love_number, relaxation_time );

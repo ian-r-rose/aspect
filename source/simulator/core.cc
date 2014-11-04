@@ -1999,8 +1999,8 @@ namespace aspect
         // then do the core work: assemble systems and solve
         solve_timestep ();
   
-//        if( timestep_number % 10 == 0)
-//          compute_empirical_tidal_parameters();
+        if( timestep_number % 10 == 0)
+          compute_empirical_tidal_parameters();
 
         pcout << std::endl;
 
