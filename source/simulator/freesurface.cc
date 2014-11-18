@@ -726,7 +726,7 @@ namespace aspect
       AssertThrow(false, ExcMessage("Need to have free surface enabled to"
                                     " compute the empirical tidal parameters"));
 
-    double love_number;
+    double precession_constant;
     double relaxation_time;
 
     GravityModel::RadialWithCentrifugal<dim> *gravity;
@@ -754,35 +754,80 @@ namespace aspect
     double stored_old_time_step = old_time_step;
 
 
-    double fictive_time = 0.0;
-    time_step = 0.0;
+    double fictive_time = 0.0;  //Start a local time at zero
+
+    const unsigned int n_perturb_steps = 10.;
+    const unsigned int n_return_steps = 3;
+    std::vector<double> moment_list( n_perturb_steps+n_return_steps+1 );
+    std::vector<double> time_list  ( n_perturb_steps+n_return_steps+1 );
+
+    //Enter the initial conditions
+    gravity->update();
+    std::vector<double> moments = gravity->get_moments();
+    moment_list[0] = moments[0]-moments[1];  //C-A
+    time_list[0] = fictive_time;
     
     //Turn on centrifugal effects
     gravity->set_froude( 1.e-2 );
 
-    for( unsigned int i=0; i < 10; ++i)
+    for( unsigned int i=1; i <= n_perturb_steps+n_return_steps; ++i)
       {
-        solve_timestep();
+        //Do a timestep without the advection stuff.
+        //Only stokes and free surface execution
+        {
+          current_linearization_point = old_solution;
+
+          assemble_stokes_system();
+          build_stokes_preconditioner();
+          solve_stokes();
+
+          //Take very small timesteps.  Larger ones should not be
+          //necessary, as we are looking for small perturbations
+          time_step = compute_time_step().first * 0.02;
+          free_surface->execute ();
+          fictive_time += time_step;
+        }
+
         gravity->update();
-        fictive_time += time_step;
-        std::vector<double> moments = gravity->get_moments();
-        pcout<<"MOMENT: "<<moments[0]<<"\tTIME: "<<fictive_time<<std::endl;
-        time_step = compute_time_step().first * 0.01;
+        moments = gravity->get_moments();
+        moment_list[i] = moments[0]-moments[1];  //C-A
+        time_list[i] = fictive_time;
+
+        //Okay, now turn off centrifugal effects partway through
+        //the experiment and let it start to relax.  This will
+        //allow us to calculate (C-A)_final and the relaxation time
+        if( i == n_perturb_steps )
+          gravity->set_froude ( 0.0 );
+
       }
+
+    //Calculate relaxation time.  This is probably pretty opaque to the
+    //reader -- pencil and paper derived this.
+    {
+      double M1_prime, M2_prime, time_switch;
+      double tau, a1, a2, b1, b2;
+ 
+      //Calculate the relevant values and finite difference derivatives
+      time_switch = time_list[n_perturb_steps];
+
+      M1_prime = (moment_list[1]-moment_list[0])/(time_list[1]-time_list[0]);
+      M2_prime = (moment_list[n_perturb_steps+1]-moment_list[n_perturb_steps])
+                 /(time_list[n_perturb_steps+1]-time_list[n_perturb_steps]);
+
+      //Come up with the fitting parameters
+      AssertThrow( (1. + M2_prime/M1_prime  > 0.) , ExcMessage("Error in calculating relaxation time"));
+      tau = -time_switch / ( std::log( 1. + M2_prime/M1_prime ) );
+      a1 = M1_prime * tau;
+      a2 = -M2_prime * tau;
+      b1 = moment_list[0] + a1;
+      b2 = moment_list[0];
+
+      relaxation_time = tau;
+      precession_constant = b1;
+    }
+       
     
-    //Turn off centrifugal effects
-    gravity->set_froude( 0.0 );
-
-    for( unsigned int i=0; i < 10; ++i)
-      {
-        solve_timestep();
-        gravity->update();
-        fictive_time += time_step;
-        std::vector<double> moments = gravity->get_moments();
-        pcout<<"MOMENT: "<<moments[0]<<"\tTIME: "<<fictive_time<<std::endl;
-        time_step = compute_time_step().first * 0.01;
-      }
-
+    
     //Restore the old state
     solution = stored_solution;
     old_solution = stored_old_solution;
@@ -793,7 +838,7 @@ namespace aspect
     free_surface->displace_mesh ();
     rebuild_stokes_matrix = rebuild_stokes_preconditioner = true;
     
-    return std::make_pair( love_number, relaxation_time );
+    return std::make_pair( precession_constant, relaxation_time );
   }
 }
 
