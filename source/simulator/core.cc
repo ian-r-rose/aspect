@@ -1930,7 +1930,11 @@ namespace aspect
     // if we want to resume a computation from an earlier point
     // then reload it from a snapshot. otherwise do the basic
     // start-up
-    if (parameters.resume_computation == true)
+    if (parameters.resume_computation == true && parameters.free_surface_enabled == true)
+      {
+        resume_solution_only();
+      }
+    else if (parameters.resume_computation == true && parameters.free_surface_enabled == false)
       {
         resume_from_snapshot();
         // we need to remove additional_refinement_times that are in the past
