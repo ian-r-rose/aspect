@@ -1598,7 +1598,7 @@ namespace aspect
     // start any scheme with an extrapolated value from the previous
     // two time steps if those are available
     current_linearization_point = old_solution;
-    if (timestep_number > 1)
+    if (timestep_number > 1 && false)
       {
         //TODO: Trilinos sadd does not like ghost vectors even as input. Copy
         //into distributed vectors for now:
@@ -1999,8 +1999,8 @@ namespace aspect
         // then do the core work: assemble systems and solve
         solve_timestep ();
   
-        if( timestep_number % 10 == 0)
-          compute_empirical_tidal_parameters();
+//        if( timestep_number % 10 == 0)
+//          compute_empirical_tidal_parameters();
 
         pcout << std::endl;
 
