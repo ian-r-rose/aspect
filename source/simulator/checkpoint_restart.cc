@@ -140,77 +140,6 @@ namespace aspect
   }
 
   template <int dim>
-  void Simulator<dim>::resume_solution_only()
-  {
-    // first check existence of the two restart files
-    {
-      const std::string filename = parameters.output_directory + "restart.mesh";
-      std::ifstream in (filename.c_str());
-      if (!in)
-        AssertThrow (false,
-                     ExcMessage (std::string("You are trying to restart a previous computation, "
-                                             "but the restart file <")
-                                 +
-                                 filename
-                                 +
-                                 "> does not appear to exist!"));
-    }
-    {
-      const std::string filename = parameters.output_directory + "restart.resume.z";
-      std::ifstream in (filename.c_str());
-      if (!in)
-        AssertThrow (false,
-                     ExcMessage (std::string("You are trying to restart a previous computation, "
-                                             "but the restart file <")
-                                 +
-                                 filename
-                                 +
-                                 "> does not appear to exist!"));
-    }
-
-    try
-      {
-        triangulation.load ((parameters.output_directory + "restart.mesh").c_str());
-      }
-    catch (...)
-      {
-        AssertThrow(false, ExcMessage("Cannot open snapshot mesh file."));
-      }
-    global_volume = GridTools::volume (triangulation, mapping);
-
-    time                      = 0;
-    timestep_number           = 0;
-    time_step = old_time_step = 0;
-
-    setup_dofs();
-
-    LinearAlgebra::BlockVector
-    distributed_system (system_rhs);
-    LinearAlgebra::BlockVector
-    old_distributed_system (system_rhs);
-    LinearAlgebra::BlockVector
-    old_old_distributed_system (system_rhs);
-    std::vector<LinearAlgebra::BlockVector *> x_system (3);
-    x_system[0] = & (distributed_system);
-    x_system[1] = & (old_distributed_system);
-    x_system[2] = & (old_old_distributed_system);
-
-    parallel::distributed::SolutionTransfer<dim, LinearAlgebra::BlockVector>
-    system_trans (dof_handler);
-
-    system_trans.deserialize (x_system);
-
-    solution = distributed_system;
-    old_solution = old_distributed_system;
-    old_old_solution = old_old_distributed_system;
- 
-
-    
-    pcout << "*** Resuming just solution from snapshot!" << std::endl << std::endl;
-  }
-
-
-  template <int dim>
   void Simulator<dim>::resume_from_snapshot()
   {
     // first check existence of the two restart files
@@ -354,8 +283,7 @@ namespace aspect
 {
 #define INSTANTIATE(dim) \
   template void Simulator<dim>::create_snapshot(); \
-  template void Simulator<dim>::resume_from_snapshot(); \
-  template void Simulator<dim>::resume_solution_only();
+  template void Simulator<dim>::resume_from_snapshot();
 
   ASPECT_INSTANTIATE(INSTANTIATE)
 }

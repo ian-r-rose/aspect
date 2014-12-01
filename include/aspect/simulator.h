@@ -492,7 +492,6 @@ namespace aspect
        * <code>source/simulator/checkpoint_restart.cc</code>.
        */
       void resume_from_snapshot();
-      void resume_solution_only();
 
       /**
        * Save a number of variables using BOOST serialization mechanism.
