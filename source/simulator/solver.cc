@@ -323,9 +323,9 @@ namespace aspect
         {
           SolverControl solver_control(10000, utmp.l2_norm()*1e-2);
 #ifdef ASPECT_USE_PETSC
-          SolverCG<LinearAlgebra::Vector> solver(solver_control);
+          SolverGMRES<LinearAlgebra::Vector> solver(solver_control);
 #else
-          TrilinosWrappers::SolverCG solver(solver_control);
+          TrilinosWrappers::SolverGMRES solver(solver_control);
 #endif
           try
             {
