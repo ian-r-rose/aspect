@@ -55,6 +55,9 @@ namespace aspect
   {
     prm.enter_subsection ("Free surface");
     {
+      prm.declare_entry("Unmooring time", "0.",
+                        Patterns::Double(0.),
+                        "");
       prm.declare_entry("Free surface stabilization theta", "0.5",
                         Patterns::Double(0,1),
                         "Theta parameter described in Kaus et. al. 2010. "
@@ -98,7 +101,12 @@ namespace aspect
       else
         AssertThrow(false, ExcMessage("The surface velocity projection must be ``normal'' or ``vertical''."));
 
+      unmoor_time = prm.get_double("Unmooring time");
     }
+    if (unmoor_time != 0.0 || 
+        sim.parameters.free_surface_boundary_indicators.empty()==false) 
+          sim.parameters.free_surface_enabled = true;
+    else sim.parameters.free_surface_enabled = false;
     prm.leave_subsection ();
   }
 
@@ -107,6 +115,9 @@ namespace aspect
   template <int dim>
   void Simulator<dim>::FreeSurfaceHandler::execute()
   {
+    if (sim.time/(sim.parameters.convert_to_years ? year_in_seconds : 1.0 ) > unmoor_time)
+      unmoor_surface();
+
     if (!sim.parameters.free_surface_enabled)
       return;
     sim.computing_timer.enter_section("FreeSurface");
@@ -840,6 +851,28 @@ namespace aspect
     
     return std::make_pair( precession_constant, relaxation_time );
   }
+  
+  template < int dim >
+  void Simulator<dim>::FreeSurfaceHandler::unmoor_surface()
+  {
+    //Don't unmoor if it has already happened
+    if(sim.parameters.free_surface_boundary_indicators.empty() == false)
+      return;
+
+    sim.pcout<<"Unmooring surface!"<<std::endl;
+
+    types::boundary_id surface_boundary_id = 1;
+    //Remove surface boundary id from the other velocity constraints 
+    sim.parameters.tangential_velocity_boundary_indicators.erase(surface_boundary_id);
+    sim.parameters.zero_velocity_boundary_indicators.erase(surface_boundary_id);
+    sim.parameters.prescribed_velocity_boundary_indicators.erase(surface_boundary_id);
+    //Now insert it into the free surface set
+    sim.parameters.free_surface_boundary_indicators.insert(surface_boundary_id);
+
+    //Change the boundary conditions.
+    sim.parameters.free_surface_enabled = true;
+  }
+
 }
 
 

@@ -394,6 +394,7 @@ namespace aspect
                                                this->get_time());
       if (output_format=="hdf5")
         {
+          mesh_changed=true;
           XDMFEntry new_xdmf_entry;
           std::string     h5_solution_file_name = solution_file_prefix + ".h5";
           std::string     xdmf_filename = this->get_output_directory() + "solution.xdmf";
