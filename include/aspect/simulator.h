@@ -1331,6 +1331,8 @@ namespace aspect
            */
           void parse_parameters (ParameterHandler &prm);
 
+          void initialize_mesh_vertices_vector();
+
         private:
           /**
            * Set the boundary conditions for the solution of the elliptic

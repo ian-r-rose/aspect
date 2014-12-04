@@ -122,6 +122,10 @@ namespace aspect
       return;
     sim.computing_timer.enter_section("FreeSurface");
 
+    //if we are just starting, we need to initialize mesh_vertices
+    if (sim.timestep_number == 0 || mesh_vertices.all_zero())
+      initialize_mesh_vertices_vector();
+
     //Make the constraints for the elliptic problem.  On the free surface, we
     //constrain mesh velocity to be v.n, on free slip it is constrainted to
     //be tangential, and on no slip boundaries it is zero.
@@ -358,13 +362,13 @@ namespace aspect
 
     rhs.compress (VectorOperation::add);
     mass_matrix.compress(VectorOperation::add);
-
+  
     //Jacobi seems to be fine here.  Other preconditioners (ILU, IC) run into troubles
     //because the matrrix is mostly empty, since we don't touch internal vertices.
     LinearAlgebra::PreconditionJacobi preconditioner_mass;
     preconditioner_mass.initialize(mass_matrix);
 
-    SolverControl solver_control(5*rhs.size(), 1e-7*rhs.l2_norm());
+    SolverControl solver_control(5*rhs.size(), 1e-6*rhs.l2_norm());
     SolverCG<LinearAlgebra::Vector> cg(solver_control);
     cg.solve (mass_matrix, dist_solution, rhs, preconditioner_mass);
 
@@ -548,38 +552,6 @@ namespace aspect
     mesh_vertices.reinit(mesh_locally_owned, mesh_locally_relevant, sim.mpi_communicator);
     mesh_vertex_velocity.reinit(mesh_locally_owned, mesh_locally_relevant, sim.mpi_communicator);
 
-    //if we are just starting, we need to initialize mesh_vertices
-    if (sim.timestep_number == 0)
-      {
-        LinearAlgebra::Vector distributed_mesh_vertices;
-        distributed_mesh_vertices.reinit(mesh_locally_owned, sim.mpi_communicator);
-
-        const std::vector<Point<dim> > mesh_support_points
-          = free_surface_fe.base_element(0).get_unit_support_points();
-        FEValues<dim> mesh_points (sim.mapping, free_surface_fe,
-                                   mesh_support_points, update_quadrature_points);
-        std::vector<unsigned int> cell_dof_indices (free_surface_fe.dofs_per_cell);
-
-        typename DoFHandler<dim>::active_cell_iterator cell = free_surface_dof_handler.begin_active(),
-                                                       endc = free_surface_dof_handler.end();
-        for (; cell != endc; ++cell)
-          if (cell->is_locally_owned())
-            {
-              mesh_points.reinit(cell);
-              cell->get_dof_indices (cell_dof_indices);
-              for (unsigned int j=0; j<free_surface_fe.base_element(0).dofs_per_cell; ++j)
-                for (unsigned int dir=0; dir<dim; ++dir)
-                  {
-                    unsigned int support_point_index
-                      = free_surface_fe.component_to_system_index(/*velocity component=*/ dir,
-                                                                                          /*dof index within component=*/ j);
-                    distributed_mesh_vertices[cell_dof_indices[support_point_index]] = mesh_points.quadrature_point(j)[dir];
-                  }
-            }
-
-        distributed_mesh_vertices.compress(VectorOperation::insert);
-        mesh_vertices = distributed_mesh_vertices;
-      }
 
     make_constraints();
 
@@ -625,6 +597,40 @@ namespace aspect
 
 
   }
+
+  template <int dim>
+  void Simulator<dim>::FreeSurfaceHandler::initialize_mesh_vertices_vector()
+  {
+    LinearAlgebra::Vector distributed_mesh_vertices;
+    distributed_mesh_vertices.reinit(mesh_locally_owned, sim.mpi_communicator);
+
+    const std::vector<Point<dim> > mesh_support_points
+      = free_surface_fe.base_element(0).get_unit_support_points();
+    FEValues<dim> mesh_points (sim.mapping, free_surface_fe,
+                               mesh_support_points, update_quadrature_points);
+    std::vector<unsigned int> cell_dof_indices (free_surface_fe.dofs_per_cell);
+
+    typename DoFHandler<dim>::active_cell_iterator cell = free_surface_dof_handler.begin_active(),
+                                                   endc = free_surface_dof_handler.end();
+    for (; cell != endc; ++cell)
+      if (cell->is_locally_owned())
+        {
+          mesh_points.reinit(cell);
+          cell->get_dof_indices (cell_dof_indices);
+          for (unsigned int j=0; j<free_surface_fe.base_element(0).dofs_per_cell; ++j)
+            for (unsigned int dir=0; dir<dim; ++dir)
+              {
+                unsigned int support_point_index
+                  = free_surface_fe.component_to_system_index(/*velocity component=*/ dir,
+                                                                                      /*dof index within component=*/ j);
+                distributed_mesh_vertices[cell_dof_indices[support_point_index]] = mesh_points.quadrature_point(j)[dir];
+              }
+        }
+
+    distributed_mesh_vertices.compress(VectorOperation::insert);
+    mesh_vertices = distributed_mesh_vertices;
+  }
+    
 
   template <int dim>
   void Simulator<dim>::FreeSurfaceHandler::displace_mesh()
@@ -882,7 +888,7 @@ namespace aspect
 #define INSTANTIATE_FREE_SURFACE(dim) \
   template class Simulator<dim>::FreeSurfaceHandler;
 
-  ASPECT_INSTANTIATE(INSTANTIATE_FREE_SURFACE)
+//  ASPECT_INSTANTIATE(INSTANTIATE_FREE_SURFACE)
 
 #define INSTANTIATE(dim) \
   template class Simulator<dim>;
