@@ -303,6 +303,41 @@ namespace aspect
       }
       prm.leave_subsection ();
     }
+
+    template <int dim>
+    template <class Archive>
+    void Liouville<dim>::serialize (Archive &ar, const unsigned int)
+    {
+      ar &Fr
+      & tau
+      & reference_moment
+      & spin_axis;
+    }
+
+
+    template <int dim>
+    void Liouville<dim>::save (std::map<std::string, std::string> &status_strings) const
+    {
+      std::ostringstream os;
+      aspect::oarchive oa (os);
+      oa << (*this);
+
+      status_strings["Liouville"] = os.str();
+    }
+
+
+    template <int dim>
+    void Liouville<dim>::load (const std::map<std::string, std::string> &status_strings)
+    {
+      // see if something was saved
+      if (status_strings.find("Liouville") != status_strings.end())
+        {
+          std::istringstream is (status_strings.find("Liouville")->second);
+          aspect::iarchive ia (is);
+          ia >> (*this);
+        }
+    }
+
   }
 }
 
