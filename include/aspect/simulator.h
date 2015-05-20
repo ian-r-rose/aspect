@@ -1381,6 +1381,11 @@ namespace aspect
           double free_surface_theta;
 
           /**
+           * Surface relaxation time constant for stabilization.
+           */
+          double relaxation_time;
+
+          /**
            * BlockVector which stores the mesh velocity interpolated onto the
            * Stokes velocity finite element space.  This is used for ALE
            * corrections.

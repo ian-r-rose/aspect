@@ -18,6 +18,7 @@
   <http://www.gnu.org/licenses/>.
  */
 
+#include <boost/math/special_functions/expm1.hpp>
 
 #include <aspect/simulator.h>
 #include <aspect/global.h>
@@ -115,6 +116,17 @@ namespace aspect
                          "may have provided for each part of the boundary. You may want "
                          "to compare this with the documentation of the geometry model you "
                          "use in your model.");
+      prm.declare_entry("Relaxation time", "0.0",
+                        Patterns::Double(0.),
+                        "Relaxation timescale for the nonstandard finite difference "
+                        "stabilization scheme. This should be chosen to be as close "
+                        "as possible to the fastest relaxation time of the system."
+                        "In general, this will correspond to the longest wavelength "
+                        "deformation mode of the system.  If it is set to zero, then "
+                        "a standard forward Euler timestep is used instead. "
+                        "Both this scheme and the quasi-implicit theta scheme are meant "
+                        "to stabilize the free surface, so it doesn't necessarily "
+                        "make sense to use both at the same time. ");
     }
     prm.leave_subsection ();
   }
@@ -125,8 +137,10 @@ namespace aspect
     prm.enter_subsection ("Free surface");
     {
       free_surface_theta = prm.get_double("Free surface stabilization theta");
-      std::string advection_dir = prm.get("Surface velocity projection");
+      AssertThrow(free_surface_theta >= 0. && free_surface_theta <= 1.0,
+                  ExcMessage("Free surface stabilization theta must be between zero and one") );
 
+      std::string advection_dir = prm.get("Surface velocity projection");
       if ( advection_dir == "normal")
         advection_direction = SurfaceAdvection::normal;
       else if ( advection_dir == "vertical")
@@ -153,6 +167,11 @@ namespace aspect
                                           "the conversion function complained as follows: "
                                           + error));
         }
+      relaxation_time = prm.get_double("Relaxation time");
+      if (sim.parameters.convert_to_years)
+        relaxation_time *= year_in_seconds;
+      AssertThrow(relaxation_time >= 0.0,
+                  ExcMessage("Relaxation time must be greater than zero") );
     }
     prm.leave_subsection ();
   }
@@ -560,7 +579,8 @@ namespace aspect
     distributed_mesh_vertex_velocity = mesh_vertex_velocity;
 
     //actually do the ALE thing
-    distributed_mesh_vertices.sadd(1.0, sim.time_step, distributed_mesh_vertex_velocity);
+    const double pseudo_timestep =  (relaxation_time == 0.0 ? sim.time_step : -boost::math::expm1( -sim.time_step/relaxation_time )*relaxation_time);
+    distributed_mesh_vertices.sadd(1.0, pseudo_timestep, distributed_mesh_vertex_velocity);
     mesh_vertices = distributed_mesh_vertices;
 
 
