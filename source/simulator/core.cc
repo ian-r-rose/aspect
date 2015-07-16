@@ -1913,6 +1913,8 @@ namespace aspect
         default:
           Assert (false, ExcNotImplemented());
       }
+
+    signals.post_solve( *this, solution );
   }
 
 
@@ -1994,6 +1996,8 @@ namespace aspect
     // start the principal loop over time steps:
     do
       {
+        signals.edit_parameters(*this, parameters);
+
         start_timestep ();
 
         // then do the core work: assemble systems and solve

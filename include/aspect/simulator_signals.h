@@ -69,6 +69,20 @@ namespace aspect
     boost::signals2::signal<void (const SimulatorAccess<dim> &,
                                   ConstraintMatrix &)>  post_constraints_creation;
 
+     /**
+     * A signal that is called before executing a timestep.
+     * This allows for editing of the parameters struct  on the 
+     * fly to give Aspect different behaviour than it otherwise
+     * would have.
+
+     * The functions that connect to this signal must take two arguments,
+     * a SimulatorAccess object that describes the simulator, and an object
+     * of type aspect::Parameters<dim>, which is the current parameters 
+     * object that the simulator is working with.
+     */
+    boost::signals2::signal<void (const SimulatorAccess<dim> &,
+                                  Parameters<dim> &parameters)>  edit_parameters;
+
     /**
      * A signal that is called at the beginning of the program. It
      * gives user extensions the ability to declare additional
