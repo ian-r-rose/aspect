@@ -1033,8 +1033,7 @@ namespace aspect
             = std::set<types::boundary_id> (x_free_surface_boundary_indicators.begin(),
                                             x_free_surface_boundary_indicators.end());
 
-          //free_surface_enabled = !free_surface_boundary_indicators.empty();
-          free_surface_enabled = true;
+          free_surface_enabled = !free_surface_boundary_indicators.empty();
         }
       catch (const std::string &error)
         {
