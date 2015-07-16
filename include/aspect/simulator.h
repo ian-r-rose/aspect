@@ -1281,7 +1281,6 @@ namespace aspect
            */
           void execute();
 
-          void unmoor_surface();
           /**
            * Allocates and sets up the members of the FreeSurfaceHandler. This
            * is called by Simulator<dim>::setup_dofs()
@@ -1390,7 +1389,6 @@ namespace aspect
            * et. al. 2010 for more details.
            */
           double free_surface_theta;
-          double unmoor_time;
 
           /**
            * BlockVector which stores the mesh velocity interpolated onto the

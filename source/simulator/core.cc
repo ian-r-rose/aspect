@@ -989,6 +989,8 @@ namespace aspect
   template <int dim>
   void Simulator<dim>::setup_dofs ()
   {
+    signals.edit_parameters(*this, parameters);
+
     computing_timer.enter_section("Setup dof systems");
 
     dof_handler.distribute_dofs(finite_element);
@@ -1996,8 +1998,6 @@ namespace aspect
     // start the principal loop over time steps:
     do
       {
-        signals.edit_parameters(*this, parameters);
-
         start_timestep ();
 
         // then do the core work: assemble systems and solve
