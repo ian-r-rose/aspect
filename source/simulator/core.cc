@@ -658,6 +658,8 @@ namespace aspect
   Simulator<dim>::
   start_timestep ()
   {
+    signals.edit_parameters(*this, parameters);
+
     // first produce some output for the screen to show where we are
     if (parameters.convert_to_years == true)
       pcout << "*** Timestep " << timestep_number
@@ -989,8 +991,6 @@ namespace aspect
   template <int dim>
   void Simulator<dim>::setup_dofs ()
   {
-    signals.edit_parameters(*this, parameters);
-
     computing_timer.enter_section("Setup dof systems");
 
     dof_handler.distribute_dofs(finite_element);
