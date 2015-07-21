@@ -658,8 +658,6 @@ namespace aspect
   Simulator<dim>::
   start_timestep ()
   {
-    signals.edit_parameters(*this, parameters);
-
     // first produce some output for the screen to show where we are
     if (parameters.convert_to_years == true)
       pcout << "*** Timestep " << timestep_number
@@ -1917,8 +1915,6 @@ namespace aspect
         default:
           Assert (false, ExcNotImplemented());
       }
-
-    signals.post_solve( *this, solution );
   }
 
 

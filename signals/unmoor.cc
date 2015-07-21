@@ -81,7 +81,7 @@ namespace aspect
   template <int dim>
   void signal_connector (SimulatorSignals<dim> &signals)
   {
-    signals.edit_parameters.connect (&unmoor_free_surface<dim>);
+    signals.edit_parameters_pre_setup_dofs.connect (&unmoor_free_surface<dim>);
   }
 
   // Tell Aspect to send signals to the connector functions
