@@ -39,8 +39,8 @@ end
 subsection Boundary temperature model
   set Model name = spherical constant
   subsection Spherical constant
-    set Inner temperature = 1000
-    set Outer temperature = 1000
+    set Inner temperature = 0
+    set Outer temperature = 0
   end
 end
 
@@ -84,7 +84,7 @@ end
 # the main features.
 subsection Mesh refinement
   set Initial global refinement          = 2
-  set Initial adaptive refinement        = 1
+  set Initial adaptive refinement        = 0
 end
 
 # We assume fixed temperatures and free slip at the inner and outer boundary
