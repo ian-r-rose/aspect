@@ -39,8 +39,8 @@ end
 subsection Boundary temperature model
   set Model name = spherical constant
   subsection Spherical constant
-    set Inner temperature = 0
-    set Outer temperature = 0
+    set Inner temperature = 2600
+    set Outer temperature = 1600
   end
 end
 

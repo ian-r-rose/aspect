@@ -30,6 +30,8 @@
 #include <aspect/initial_conditions/interface.h>
 #include <aspect/simulator.h>
 
+#include <fstream>
+
 extern "C" {
 #include <ucb_A3d.h>
 }
@@ -52,7 +54,16 @@ namespace aspect
 
   class LinearInterpolatedFunction
   {
+    public:
+
+      LinearInterpolatedFunction() {}
+
       LinearInterpolatedFunction( const std::vector<double> &x, const std::vector<double> &y )
+      {
+        initialize(x,y);
+      }
+
+      void initialize( const std::vector<double> &x, const std::vector<double> &y )
       {
         AssertThrow( x.size() == y.size(), ExcMessage("Vectors for interpolation must be the same size") );
         mapping.reserve(x.size());
@@ -64,19 +75,20 @@ namespace aspect
           mapping.insert( std::pair<double, double>( *xit, *yit ) );
       }
 
-      virtual double value( const double x )
+      virtual double value( const double x ) const
       {
-        boost::container::flat_map<double,double>::iterator entry = mapping.upper_bound(x);
+        boost::container::flat_map<double,double>::const_iterator entry = mapping.upper_bound(x);
         if ( entry == mapping.end() ) return (--entry)->second;
         if ( entry == mapping.begin() ) return (entry)->second;
 
-        boost::container::flat_map<double,double>::iterator upper = entry, lower = --entry;
+        boost::container::flat_map<double,double>::const_iterator upper = entry, lower = --entry;
         const double dx = (x - lower->first)/(upper->first - lower->first);
         return dx*upper->second + (1.-dx)*lower->second;
       }
 
 
     private:
+
       boost::container::flat_map<double, double> mapping;
   };
 
@@ -113,6 +125,16 @@ namespace aspect
         parse_parameters (ParameterHandler &prm);
 
       private:
+
+        void load_mantle_model();
+
+        std::string filename;
+
+
+        LinearInterpolatedFunction reference_temperature;
+        LinearInterpolatedFunction heat_capacity;
+        LinearInterpolatedFunction thermal_expansivity;
+        LinearInterpolatedFunction dGdT;
     };
 
     template <int dim>
@@ -146,6 +168,37 @@ namespace aspect
       prm.leave_subsection ();
  
       initialize_semucb();
+      load_mantle_model();
+    }
+
+    template <int dim>
+    void
+    SEMUCB<dim>::load_mantle_model()
+    {
+      filename.assign("mantle_model.txt");
+      std::ifstream model_file( filename );
+
+      std::vector<double> r_vec, T_vec, a_vec, c_vec, dgdt_vec;
+
+      char tmpline[1024];
+      model_file.getline(tmpline, 1024);  // read in the header
+      while ( ! model_file.eof() )
+        {
+          double r, g, p, T, rho, vp, vs, K, G, a, c, dgdt;
+          model_file >> r >> g >> p >> T >> rho >> vp >> vs >> K >> G >> a >> c >> dgdt;
+
+          //Fill the vectors of interest
+          r_vec.push_back(r);
+          T_vec.push_back(T);
+          a_vec.push_back(a);
+          c_vec.push_back(c);
+          dgdt_vec.push_back(dgdt);
+        }
+
+        reference_temperature.initialize( r_vec, T_vec );
+        thermal_expansivity.initialize( r_vec, a_vec );
+        heat_capacity.initialize( r_vec, c_vec );
+        dGdT.initialize( r_vec, dgdt_vec );
     }
 
     template <int dim>
@@ -168,26 +221,23 @@ namespace aspect
       get_ucb_ref_(&radius, &ref_rho, &ref_vpv, &ref_vsv, &ref_qk, &ref_qmu, &ref_vph, &ref_vsh, &ref_eta);
 
       //Get the 1D reference temperature profile at this radius
-      const double reference_temperature = 0.;//adiabatic_initial_conditions.initial_temperature( position );
+      const double reference_T = reference_temperature.value( radius );
  
       //Calculate reference moduli
       const double ref_vs = 0.5 * (ref_vsv + ref_vsh); //Don't care about anisotropy at the moment, so average these
       const double ref_G = ref_vs*ref_vs*ref_rho;
 
       //Shortcut if ref_vs = 0
-      if ( ref_vs == 0.0 ) return reference_temperature;
+      if ( ref_vs == 0.0 ) return reference_T;
 
-      const double dGdT = 3.e7;
-      const double alpha = 3.e-5;
-      const double dvsdT = 0.5 * ref_vs * ( dGdT/ref_G + alpha );
-      this->get_pcout()<<"dvsdt "<<dvsdT<<"\t"<<ref_G<<"\t"<<ref_vs<<std::endl;
+      const double dvsdT = 0.5 * ref_vs * ( dGdT.value(radius) /ref_G + thermal_expansivity.value(radius) );
 
       double vs_perturbation;
       get_a3d_perturbation_(&lat, &lon, &radius_km, const_cast<char *>("S"), &vs_perturbation);
 
       const double dT = vs_perturbation*ref_vs / dvsdT;
 
-      return reference_temperature + dT;
+      return reference_T ;//+ dT;
     }
 
 
