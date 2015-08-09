@@ -193,8 +193,8 @@ mantle_model_cooler = MantleModel( mantle_rock, mantle_pressure, model_temperatu
 model_dGdT = (mantle_model_hotter.G() - mantle_model_cooler.G())/(2.*dT)
 
 #Generate a figure of the model, comparing it with the SEMUCB model
-plt.figure(figsize=(16,16) )
-plt.subplot(221)
+plt.figure(figsize=(24,16) )
+plt.subplot(231)
 
 plt.plot(mantle_radius/1.e3, model_temperature, label=r"Adiabatic profile, $T_p=%2.0f K$"%(T0))
 tmp = np.linspace(8.5e9, 135.e9, 100)
@@ -204,7 +204,7 @@ plt.ylabel(r"Temperature (K)")
 plt.xlim( radius_cmb/1.e3, radius_earth/1.e3 )
 plt.legend(loc='lower left')
 
-plt.subplot(222)
+plt.subplot(232)
 
 plt.plot(mantle_radius/1.e3, mantle_vp/1.e3, 'k--')
 plt.plot(mantle_radius/1.e3, model_vp/1.e3, label=r"Model $V_S$")
@@ -221,18 +221,31 @@ plt.ylim(2,14)
 plt.xlim( radius_cmb/1.e3, radius_earth/1.e3 )
 plt.legend(loc='lower left')
 
-plt.subplot(223)
+plt.subplot(233)
 plt.plot(mantle_radius/1.e3, model_expansivity )
 plt.xlabel(r"Radius (km)")
 plt.ylabel(r"Thermal expansivity (1/K)")
 plt.ylim(0, 5.e-5)
 plt.xlim( radius_cmb/1.e3, radius_earth/1.e3 )
 
-plt.subplot(224)
+plt.subplot(234)
 plt.plot(mantle_radius/1.e3, model_dGdT )
 plt.xlabel(r"Radius (km)")
-plt.ylabel(r"dG/dT (Pa/K)")
+plt.ylabel(r"$dG/dT$ (Pa/K)")
 plt.ylim(-2.5e7, 0)
+plt.xlim( radius_cmb/1.e3, radius_earth/1.e3 )
+
+plt.subplot(235)
+plt.plot(mantle_radius/1.e3, model_cp )
+plt.xlabel(r"Radius (km)")
+plt.ylabel(r"$C_p$ (J/kg/K)")
+plt.ylim(0, 1500)
+plt.xlim( radius_cmb/1.e3, radius_earth/1.e3 )
+
+plt.subplot(236)
+plt.plot(mantle_radius/1.e3, 0.5*( model_dGdT/model_shear_modulus + model_expansivity)*100. )
+plt.xlabel(r"Radius (km)")
+plt.ylabel(r"$d\ln{v_S}/dT \times 100$ (J/kg/K)")
 plt.xlim( radius_cmb/1.e3, radius_earth/1.e3 )
 
 plt.savefig("mantle_model.pdf")
