@@ -20,6 +20,7 @@
 
 
 #include <aspect/postprocess/visualization/dynamic_topography.h>
+#include <aspect/postprocess/boundary_pressures.h>
 #include <aspect/simulator_access.h>
 
 #include <deal.II/base/quadrature_lib.h>
@@ -63,9 +64,9 @@ namespace aspect
 
         std::vector<std::vector<double> > composition_values (this->n_compositional_fields(),std::vector<double> (quadrature_formula.size()));
 
-        double integrated_topography = 0;
-        double integrated_surface_area = 0;
-
+        // Get the laterally averaged surface pressure for calculating dynamic topography
+        const BoundaryPressures<dim> *boundary_pressure_postprocessor = this->template find_postprocessor<Postprocess::BoundaryPressures<dim> >();
+        const double surface_pressure = boundary_pressure_postprocessor->pressure_at_top();
         // loop over all of the surface cells and if one less than h/3 away from
         // the top surface, evaluate the stress at its center
         typename DoFHandler<dim>::active_cell_iterator
@@ -145,7 +146,7 @@ namespace aspect
                     const Tensor<1,dim> gravity_direction = gravity/gravity.norm();
 
                     // Subtract the dynamic pressure
-                    const double dynamic_pressure   = in.pressure[q] - this->get_adiabatic_conditions().pressure(location);
+                    const double dynamic_pressure   = in.pressure[q] - surface_pressure;
                     const double sigma_rr           = gravity_direction * (shear_stress * gravity_direction) - dynamic_pressure;
                     const double dynamic_topography = - sigma_rr / gravity.norm() / density;
 
@@ -156,84 +157,20 @@ namespace aspect
                   }
 
                 const double dynamic_topography_cell_average = dynamic_topography_x_volume / volume;
-                // Compute the associated surface area to later compute the surfaces weighted integral
-                fe_face_values.reinit(cell, top_face_idx);
-                const double surface = fe_face_values.JxW(0);
-
-                integrated_topography += dynamic_topography_cell_average*surface;
-                integrated_surface_area += surface;
 
                 (*return_value.second)(cell_index) = dynamic_topography_cell_average;
-              }
-
-        // Calculate surface weighted average dynamic topography
-        const double average_topography = Utilities::MPI::sum (integrated_topography,this->get_mpi_communicator())
-                                          / Utilities::MPI::sum (integrated_surface_area,this->get_mpi_communicator());
-
-        // subtract the average dynamic topography
-        cell_index = 0;
-        cell = this->get_dof_handler().begin_active();
-        if (subtract_mean_dyn_topography)
-          for (; cell!=endc; ++cell,++cell_index)
-            if (cell->is_locally_owned()
-                && (*return_value.second)(cell_index) != 0
-                && cell->at_boundary())
-              {
-                for (unsigned int f=0; f<GeometryInfo<dim>::faces_per_cell; ++f)
-                  if (cell->at_boundary(f) && this->get_geometry_model().depth (cell->face(f)->center()) < cell->face(f)->minimum_vertex_distance()/3)
-                    {
-                      (*return_value.second)(cell_index) -= average_topography;
-                      break;
-                    }
               }
 
         return return_value;
       }
 
       template <int dim>
-      void
-      DynamicTopography<dim>::
-      declare_parameters (ParameterHandler &prm)
+      std::list<std::string>
+      DynamicTopography<dim>::required_other_postprocessors() const
       {
-        prm.enter_subsection("Postprocess");
-        {
-          prm.enter_subsection("Visualization");
-          {
-            prm.enter_subsection("Dynamic Topography");
-            {
-              prm.declare_entry ("Subtract mean of dynamic topography", "false",
-                                 Patterns::Bool (),
-                                 "Option to remove the mean dynamic topography "
-                                 "in the outputted data file (not visualization). "
-                                 "'true' subtracts the mean, 'false' leaves "
-                                 "the calculated dynamic topography as is. ");
-
-            }
-            prm.leave_subsection();
-          }
-          prm.leave_subsection();
-        }
-        prm.leave_subsection();
-      }
-
-
-      template <int dim>
-      void
-      DynamicTopography<dim>::parse_parameters (ParameterHandler &prm)
-      {
-        prm.enter_subsection("Postprocess");
-        {
-          prm.enter_subsection("Visualization");
-          {
-            prm.enter_subsection("Dynamic Topography");
-            {
-              subtract_mean_dyn_topography              = prm.get_bool("Subtract mean of dynamic topography");
-            }
-            prm.leave_subsection();
-          }
-          prm.leave_subsection();
-        }
-        prm.leave_subsection();
+        std::list<std::string> deps;
+        deps.push_back("boundary pressures");
+        return deps;
       }
     }
   }
@@ -256,8 +193,8 @@ namespace aspect
                                                   "gravity acts. In other words, we compute "
                                                   "$\\sigma_{rr}={\\hat g}^T(2 \\eta \\varepsilon(\\mathbf u)-\\frac 13 (\\textrm{div}\\;\\mathbf u)I)\\hat g - p_d$ "
                                                   "where $\\hat g = \\mathbf g/\\|\\mathbf g\\|$ is the direction of "
-                                                  "the gravity vector $\\mathbf g$ and $p_d=p-p_a$ is the dynamic "
-                                                  "pressure computed by subtracting the adiabatic pressure $p_a$ "
+                                                  "the gravity vector $\\mathbf g$ and $p_d=p-p_s$ is the dynamic "
+                                                  "pressure computed by subtracting the laterally averaged surface pressure $p_s$ "
                                                   "from the total pressure $p$ computed as part of the Stokes "
                                                   "solve. From this, the dynamic "
                                                   "topography is computed using the formula "

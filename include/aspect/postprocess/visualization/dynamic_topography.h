@@ -1,5 +1,5 @@
 /*
-  Copyright (C) 2011, 2012 by the authors of the ASPECT code.
+  Copyright (C) 2011-2015 by the authors of the ASPECT code.
 
   This file is part of ASPECT.
 
@@ -19,11 +19,12 @@
 */
 
 
-#ifndef __aspect__postprocess_visualization_viscosity_h
-#define __aspect__postprocess_visualization_viscosity_h
+#ifndef __aspect__postprocess_visualization_dynamic_topography_h
+#define __aspect__postprocess_visualization_dynamic_topography_h
 
 #include <aspect/postprocess/visualization.h>
 #include <aspect/simulator_access.h>
+#include <aspect/simulator.h>
 
 
 namespace aspect
@@ -70,25 +71,13 @@ namespace aspect
           execute () const;
 
           /**
-           * Declare the parameters this class takes through input files.
-           */
-          static
-          void
-          declare_parameters (ParameterHandler &prm);
-
-          /**
-           * Read the parameters this class declares from the parameter file.
+           * Let the postprocessor manager know about the other postprocessors
+           * which this one depends on.  Specifically, we will need BoundaryPressures
+           * for computing the dynamic pressure at the surface.
            */
           virtual
-          void
-          parse_parameters (ParameterHandler &prm);
-
-        private:
-          /**
-           * A parameter that we read from the input file that denotes whether
-           * we should subtract the mean topography or not.
-           */
-          bool subtract_mean_dyn_topography;
+          std::list<std::string>
+          required_other_postprocessors() const;
       };
     }
   }
