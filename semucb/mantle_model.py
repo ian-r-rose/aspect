@@ -96,6 +96,24 @@ class MantleRock(burnman.Composite):
         except ValueError:
           print "Cannot evaluate mantle EOS at P,T", pressure, temperature
 
+#Light wrapper around the burnman.Model class 
+#to add a method for heat capacity per density, 
+#rather than molar heat capacity.  Is this an 
+#oversight in the original Model? Perhaps.
+class MantleModel( burnman.Model ):
+    def __init__(self, rock, p, T):
+        super(MantleModel,self).__init__(rock,p,T,burnman.averaging_schemes.HashinShtrikmanAverage() )
+        self.c_p_rho = None
+    def cp_per_density(self):
+        if self.c_p_rho is None:
+            self.calc_moduli_()
+            self.c_p_rho = np.zeros(len(self.p))
+            for idx in range(len(self.p)):
+                mass_per_mole_molecules = np.sum( [ m['rho']*m['V'] for m in self.moduli[idx] ] )
+                specific_heat_per_mole_molecules = np.sum( [ m['c_p']*m['fraction'] for m in self.moduli[idx] ] )
+                self.c_p_rho[idx] =  specific_heat_per_mole_molecules/mass_per_mole_molecules
+        return self.c_p_rho
+
 def compute_gravity(density, radii):
     #Calculate the gravity of the planet, based on a density profile.  This integrates
     #Poisson's equation in radius, under the assumption that the planet is laterally
@@ -158,20 +176,20 @@ T0=1600. #Mantle potential temperature
 model_temperature = burnman.geotherm.adiabatic(mantle_pressure[::-1], T0, mantle_rock)[::-1]
 
 #Make the mantle model
-mantle_model = burnman.Model( mantle_rock, mantle_pressure, model_temperature, burnman.averaging_schemes.HashinShtrikmanAverage())
+mantle_model = MantleModel( mantle_rock, mantle_pressure, model_temperature)
 
 #Evaluate a ton of stuff about the model
 model_density = mantle_model.density()
 model_vp = mantle_model.v_p()
 model_vs = mantle_model.v_s()
-model_cp = mantle_model.heat_capacity_p()
+model_cp = mantle_model.cp_per_density()
 model_expansivity = mantle_model.thermal_expansivity()
 model_bulk_modulus = mantle_model.K()
 model_shear_modulus = mantle_model.G()
 #Do a finite difference approximation of dGdT.  Kind of ugly and expensive, but works
 dT = 10.0 
-mantle_model_hotter = burnman.Model( mantle_rock, mantle_pressure, model_temperature+dT, burnman.averaging_schemes.HashinShtrikmanAverage())
-mantle_model_cooler = burnman.Model( mantle_rock, mantle_pressure, model_temperature-dT, burnman.averaging_schemes.HashinShtrikmanAverage())
+mantle_model_hotter = MantleModel( mantle_rock, mantle_pressure, model_temperature+dT)
+mantle_model_cooler = MantleModel( mantle_rock, mantle_pressure, model_temperature-dT)
 model_dGdT = (mantle_model_hotter.G() - mantle_model_cooler.G())/(2.*dT)
 
 #Generate a figure of the model, comparing it with the SEMUCB model
