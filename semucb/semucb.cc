@@ -27,8 +27,11 @@
 #include <boost/container/flat_map.hpp>
 
 #include <aspect/utilities.h>
-#include <aspect/initial_conditions/interface.h>
 #include <aspect/simulator.h>
+
+#include <aspect/initial_conditions/interface.h>
+#include <aspect/gravity_model/interface.h>
+#include <aspect/material_model/interface.h>
 
 #include <fstream>
 
@@ -169,10 +172,30 @@ static void initialize_semucb()
 
 namespace aspect
 {
+  using namespace dealii;
+
+  namespace GravityModel
+  {
+
+    template <int dim>
+    class SEMUCB : public Interface<dim>
+    {
+      public:
+ 
+        //Return a gravity vector that is radial, with magnitude
+        //given by the gravity function in the MantleModel
+        virtual Tensor<1,dim> 
+        gravity_vector (const Point<dim> &p) const
+        {
+          const double r = p.norm();
+          if ( r == 0.0 ) return Tensor<1,dim>();
+          else return -MantleModel::gravity(r) * p / r;
+        }
+    };
+  }
+
   namespace InitialConditions
   {
-    using namespace dealii;
-
     /**
      *
      * @ingroup InitialConditionsModels
@@ -287,6 +310,12 @@ namespace aspect
   namespace InitialConditions
   {
     ASPECT_REGISTER_INITIAL_CONDITIONS(SEMUCB,
+                                       "SEMUCB",
+                                       "")
+  }
+  namespace GravityModel
+  {
+    ASPECT_REGISTER_GRAVITY_MODEL(SEMUCB,
                                        "SEMUCB",
                                        "")
   }
