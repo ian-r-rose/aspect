@@ -56,13 +56,13 @@ class LinearInterpolatedFunction
 
     //Fill a boost::container::flat_map with the x,y values.
     //The flat map has the property that the items in it are ordered,
-    //so the input vectors do not necessarily need to be ordered, just 
+    //so the input vectors do not necessarily need to be ordered, just
     //paired such that x[i]->y[i].  The flat map also does binary searches
     //according to a key, but unlike std::map, is implemented in a contiguous
     //block of memory, so should have better speed and cache locality (at least in theory!)
     void initialize( const std::vector<double> &x, const std::vector<double> &y )
     {
-      if( x.size() != y.size() ) std::cerr<<"Vectors given to LinearInterpolatedFunction are of different lengths!"<<std::endl;
+      if ( x.size() != y.size() ) std::cerr<<"Vectors given to LinearInterpolatedFunction are of different lengths!"<<std::endl;
       mapping.reserve(x.size());
 
 
@@ -70,7 +70,7 @@ class LinearInterpolatedFunction
       std::vector<double>::const_iterator yit = y.begin();
 
       for ( ; xit != x.end(); ++xit, ++yit )
-	mapping.insert( std::pair<double, double>( *xit, *yit ) );
+        mapping.insert( std::pair<double, double>( *xit, *yit ) );
     }
 
     //Evaluate the interpolation
@@ -78,7 +78,7 @@ class LinearInterpolatedFunction
     {
       //get an iterator to the left of the requested value
       boost::container::flat_map<double,double>::const_iterator entry = mapping.upper_bound(x);
- 
+
       //If we are after the end of the map, just return the rightmost value
       if ( entry == mapping.end() ) return (--entry)->second;
       //If we are before the beginning of the map, just return the leftmost value
@@ -100,45 +100,45 @@ namespace MantleModel
   LinearInterpolatedFunction gravity;
   LinearInterpolatedFunction pressure;
   LinearInterpolatedFunction reference_temperature;
-  LinearInterpolatedFunction reference_density; 
-  LinearInterpolatedFunction P_wave_speed; 
-  LinearInterpolatedFunction S_wave_speed; 
-  LinearInterpolatedFunction bulk_modulus; 
-  LinearInterpolatedFunction shear_modulus; 
+  LinearInterpolatedFunction reference_density;
+  LinearInterpolatedFunction P_wave_speed;
+  LinearInterpolatedFunction S_wave_speed;
+  LinearInterpolatedFunction bulk_modulus;
+  LinearInterpolatedFunction shear_modulus;
   LinearInterpolatedFunction thermal_expansivity;
   LinearInterpolatedFunction heat_capacity;
   LinearInterpolatedFunction dGdT;
 
   void initialize()
   {
-    static bool mantle_model_initialized = false; 
+    static bool mantle_model_initialized = false;
     if (mantle_model_initialized ) return;
 
     std::ifstream model_file( "mantle_model.txt" );
 
-    std::vector<double> r_vec, g_vec, p_vec, T_vec, rho_vec, vp_vec, 
-                        vs_vec, K_vec, G_vec, a_vec, c_vec, dgdt_vec;
+    std::vector<double> r_vec, g_vec, p_vec, T_vec, rho_vec, vp_vec,
+        vs_vec, K_vec, G_vec, a_vec, c_vec, dgdt_vec;
 
     char tmpline[1024];
     model_file.getline(tmpline, 1024);  // read in the header
     while ( ! model_file.eof() )
       {
-	double r, g, p, T, rho, vp, vs, K, G, a, c, dgdt;
-	model_file >> r >> g >> p >> T >> rho >> vp >> vs >> K >> G >> a >> c >> dgdt;
+        double r, g, p, T, rho, vp, vs, K, G, a, c, dgdt;
+        model_file >> r >> g >> p >> T >> rho >> vp >> vs >> K >> G >> a >> c >> dgdt;
 
-	//Fill the vectors of interest
-	r_vec.push_back(r);
-	g_vec.push_back(g);
-	p_vec.push_back(p);
-	T_vec.push_back(T);
-	rho_vec.push_back(rho);
-	vp_vec.push_back(vp);
-	vs_vec.push_back(vs);
-	K_vec.push_back(K);
-	G_vec.push_back(G);
-	a_vec.push_back(a);
-	c_vec.push_back(c);
-	dgdt_vec.push_back(dgdt);
+        //Fill the vectors of interest
+        r_vec.push_back(r);
+        g_vec.push_back(g);
+        p_vec.push_back(p);
+        T_vec.push_back(T);
+        rho_vec.push_back(rho);
+        vp_vec.push_back(vp);
+        vs_vec.push_back(vs);
+        K_vec.push_back(K);
+        G_vec.push_back(G);
+        a_vec.push_back(a);
+        c_vec.push_back(c);
+        dgdt_vec.push_back(dgdt);
       }
 
     //Initialize the LinearInterpolatedFunctions
@@ -181,10 +181,14 @@ namespace aspect
     class SEMUCB : public Interface<dim>
     {
       public:
- 
+        SEMUCB()
+        {
+          MantleModel::initialize();
+        }
+
         //Return a gravity vector that is radial, with magnitude
         //given by the gravity function in the MantleModel
-        virtual Tensor<1,dim> 
+        virtual Tensor<1,dim>
         gravity_vector (const Point<dim> &p) const
         {
           const double r = p.norm();
@@ -192,6 +196,158 @@ namespace aspect
           else return -MantleModel::gravity(r) * p / r;
         }
     };
+  }
+
+  namespace MaterialModel
+  {
+
+    template <int dim>
+    class SEMUCB : public MaterialModel::Interface<dim>, public ::aspect::SimulatorAccess<dim>
+    {
+      public:
+
+        virtual void evaluate(const MaterialModel::MaterialModelInputs<dim> &in,
+                              MaterialModel::MaterialModelOutputs<dim> &out) const;
+
+        virtual bool is_compressible () const
+        {
+          return true;
+        }
+
+        virtual double reference_viscosity () const
+        {
+          return eta;
+        }
+        virtual double reference_density () const
+        {
+          return MantleModel::reference_density(reference_radius);
+        }
+
+        virtual double reference_thermal_expansion_coefficient () const
+        {
+          return MantleModel::thermal_expansivity(reference_radius);
+        }
+
+        double reference_thermal_diffusivity () const
+        {
+          return reference_thermal_conductivity/reference_density()/reference_cp();
+        }
+
+        double reference_cp () const
+        {
+          return MantleModel::heat_capacity( reference_radius );
+        }
+
+        virtual bool
+        viscosity_depends_on (const NonlinearDependence::Dependence ) const
+        {
+          return false;
+        }
+
+        virtual bool
+        density_depends_on (const NonlinearDependence::Dependence ) const
+        {
+          return false;
+        }
+
+        virtual bool
+        compressibility_depends_on (const NonlinearDependence::Dependence ) const
+        {
+          return false;
+        }
+
+        virtual bool
+        specific_heat_depends_on (const NonlinearDependence::Dependence ) const
+        {
+          return false;
+        }
+
+        virtual bool
+        thermal_conductivity_depends_on (const NonlinearDependence::Dependence ) const
+        {
+          return false;
+        }
+
+        static
+        void
+        declare_parameters (ParameterHandler &prm);
+
+        virtual
+        void
+        parse_parameters (ParameterHandler &prm);
+
+      private:
+        double reference_radius;
+        double eta;
+        double reference_thermal_conductivity;
+    };
+
+    template <int dim>
+    void
+    SEMUCB<dim>::
+    evaluate(const MaterialModel::MaterialModelInputs<dim> &in,
+             MaterialModel::MaterialModelOutputs<dim> &out) const
+    {
+      for (unsigned int i=0; i < in.position.size(); ++i)
+        {
+          const double radius = in.position[i].norm();
+
+          out.viscosities[i] = eta;
+          out.densities[i] = MantleModel::reference_density(radius)
+                             * (1.0 + MantleModel::thermal_expansivity(radius) *
+                                (MantleModel::reference_temperature(radius) - in.temperature[i]) );
+
+          out.thermal_expansion_coefficients[i] = MantleModel::thermal_expansivity(radius);
+          out.specific_heat[i] = MantleModel::heat_capacity(radius);
+          out.thermal_conductivities[i] = reference_thermal_conductivity;
+          out.compressibilities[i] = 1.0/MantleModel::bulk_modulus(radius);
+
+          // Pressure derivative of entropy at the given positions.
+          out.entropy_derivative_pressure[i] = 0.0;
+          // Temperature derivative of entropy at the given positions.
+          out.entropy_derivative_temperature[i] = 0.0;
+          // Change in composition due to chemical reactions at the
+          // given positions. The term reaction_terms[i][c] is the
+          // change in compositional field c at point i.
+          for (unsigned int c=0; c<in.composition[i].size(); ++c)
+            out.reaction_terms[i][c] = 0.0;
+        }
+    }
+
+    template <int dim>
+    void
+    SEMUCB<dim>::declare_parameters (ParameterHandler &prm)
+    {
+      prm.enter_subsection("Material model");
+      {
+        prm.enter_subsection("SEMUCB");
+        {
+        }
+        prm.leave_subsection();
+      }
+      prm.leave_subsection();
+    }
+
+    template <int dim>
+    void
+    SEMUCB<dim>::parse_parameters (ParameterHandler &prm)
+    {
+      prm.enter_subsection("Material model");
+      {
+        prm.enter_subsection("SEMUCB");
+        {
+        }
+        prm.leave_subsection();
+      }
+      prm.leave_subsection();
+
+      reference_radius = 4.9e6; //mid-mantle-ish type depth
+      eta = 1.e21;
+      reference_thermal_conductivity = 3.0;
+
+      initialize_semucb();
+      MantleModel::initialize();
+    }
   }
 
   namespace InitialConditions
@@ -256,7 +412,7 @@ namespace aspect
         prm.leave_subsection ();
       }
       prm.leave_subsection ();
- 
+
       initialize_semucb();
       MantleModel::initialize();
     }
@@ -277,12 +433,12 @@ namespace aspect
 
       //Get the 1D reference model at this radius
       double ref_rho, ref_vpv, ref_vsv, ref_qk, ref_qmu, ref_vph, ref_vsh, ref_eta;
-      if( radius > 6370999.) radius = 6370999.;  //Ref model has problems at RE
+      if ( radius > 6370999.) radius = 6370999.; //Ref model has problems at RE
       get_ucb_ref_(&radius, &ref_rho, &ref_vpv, &ref_vsv, &ref_qk, &ref_qmu, &ref_vph, &ref_vsh, &ref_eta);
 
       //Get the 1D reference temperature profile at this radius
       const double reference_T = MantleModel::reference_temperature( radius );
- 
+
       //Calculate reference moduli
       const double ref_vs = 0.5 * (ref_vsv + ref_vsh); //Don't care about anisotropy at the moment, so average these
       const double ref_G = ref_vs*ref_vs*ref_rho;
@@ -316,8 +472,14 @@ namespace aspect
   namespace GravityModel
   {
     ASPECT_REGISTER_GRAVITY_MODEL(SEMUCB,
-                                       "SEMUCB",
-                                       "")
+                                  "SEMUCB",
+                                  "")
+  }
+  namespace MaterialModel
+  {
+    ASPECT_REGISTER_MATERIAL_MODEL(SEMUCB,
+                                   "SEMUCB",
+                                   "")
   }
 }
 #endif
