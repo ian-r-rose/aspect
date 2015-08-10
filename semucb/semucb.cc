@@ -24,7 +24,7 @@
 
 #include <deal.II/base/std_cxx11/array.h>
 #include <deal.II/base/function.h>
-#include <boost/container/flat_map.hpp>
+#include <deal.II/numerics/data_postprocessor.h>
 
 #include <aspect/utilities.h>
 #include <aspect/simulator.h>
@@ -32,7 +32,10 @@
 #include <aspect/initial_conditions/interface.h>
 #include <aspect/gravity_model/interface.h>
 #include <aspect/material_model/interface.h>
+#include <aspect/postprocess/visualization.h>
 
+
+#include <boost/container/flat_map.hpp>
 #include <fstream>
 
 extern "C" {
@@ -455,8 +458,100 @@ namespace aspect
 
       return reference_T + dT;
     }
+  }
 
+  namespace Postprocess
+  {
+    namespace VisualizationPostprocessors
+    {
+      template <int dim>
+      class SEMUCBDensityAnomaly
+        : public DataPostprocessorScalar<dim>,
+          public SimulatorAccess<dim>,
+          public Interface<dim>
+      {
+        public:
+          SEMUCBDensityAnomaly ()
+            :  DataPostprocessorScalar<dim> ("density anomaly", update_values | update_q_points | update_gradients)
+          {
+            MantleModel::initialize();
+          }
 
+          virtual
+          void
+          compute_derived_quantities_vector (const std::vector<Vector<double> >              &uh,
+                                             const std::vector<std::vector<Tensor<1,dim> > > &duh,
+                                             const std::vector<std::vector<Tensor<2,dim> > > &,
+                                             const std::vector<Point<dim> >                  &,
+                                             const std::vector<Point<dim> >                  &evaluation_points,
+                                             std::vector<Vector<double> >                    &computed_quantities) const
+	  {
+	    const unsigned int n_quadrature_points = uh.size();
+	    Assert (computed_quantities.size() == n_quadrature_points,    ExcInternalError());
+	    Assert (computed_quantities[0].size() == 1,                   ExcInternalError());
+	    Assert (uh[0].size() == this->introspection().n_components,           ExcInternalError());
+
+	    MaterialModel::MaterialModelInputs<dim> in(n_quadrature_points,
+						       this->n_compositional_fields());
+	    MaterialModel::MaterialModelOutputs<dim> out(n_quadrature_points,
+							 this->n_compositional_fields());
+
+	    in.position = evaluation_points;
+	    in.strain_rate.resize(0); // we do not need the viscosity
+	    for (unsigned int q=0; q<n_quadrature_points; ++q)
+	      {
+		in.pressure[q]=uh[q][this->introspection().component_indices.pressure];
+		in.temperature[q]=uh[q][this->introspection().component_indices.temperature];
+		for (unsigned int d = 0; d < dim; ++d)
+		  {
+		    in.velocity[q][d]=uh[q][this->introspection().component_indices.velocities[d]];
+		    in.pressure_gradient[q][d] = duh[q][this->introspection().component_indices.pressure][d];
+		  }
+
+		for (unsigned int c=0; c<this->n_compositional_fields(); ++c)
+		  in.composition[q][c] = uh[q][this->introspection().component_indices.compositional_fields[c]];
+	      }
+
+	    this->get_material_model().evaluate(in, out);
+
+	    for (unsigned int q=0; q<n_quadrature_points; ++q)
+	      computed_quantities[q](0) = out.densities[q] - MantleModel::reference_density(in.position[q].norm());
+	  }
+      };
+
+      template <int dim>
+      class SEMUCBTemperatureAnomaly
+        : public DataPostprocessorScalar<dim>,
+          public SimulatorAccess<dim>,
+          public Interface<dim>
+      {
+        public:
+          SEMUCBTemperatureAnomaly ()
+            :  DataPostprocessorScalar<dim> ("temperature anomaly", update_values | update_q_points)
+          {
+            MantleModel::initialize();
+          }
+
+          virtual
+          void
+          compute_derived_quantities_vector (const std::vector<Vector<double> >              &uh,
+                                             const std::vector<std::vector<Tensor<1,dim> > > &,
+                                             const std::vector<std::vector<Tensor<2,dim> > > &,
+                                             const std::vector<Point<dim> >                  &,
+                                             const std::vector<Point<dim> >                  &evaluation_points,
+                                             std::vector<Vector<double> >                    &computed_quantities) const
+	  {
+	    const unsigned int n_quadrature_points = uh.size();
+	    Assert (computed_quantities.size() == n_quadrature_points,    ExcInternalError());
+	    Assert (computed_quantities[0].size() == 1,                   ExcInternalError());
+	    Assert (uh[0].size() == this->introspection().n_components,   ExcInternalError());
+
+	    for (unsigned int q=0; q<n_quadrature_points; ++q)
+	      computed_quantities[q](0) = uh[q][this->introspection().component_indices.temperature] 
+                                          - MantleModel::reference_temperature(evaluation_points[q].norm());
+	  }
+      };
+    }
   }
 }
 
@@ -480,6 +575,18 @@ namespace aspect
     ASPECT_REGISTER_MATERIAL_MODEL(SEMUCB,
                                    "SEMUCB",
                                    "")
+  }
+  namespace Postprocess
+  {
+    namespace VisualizationPostprocessors
+    {
+      ASPECT_REGISTER_VISUALIZATION_POSTPROCESSOR(SEMUCBDensityAnomaly,
+                                                  "SEMUCB density anomaly",
+                                                  "")
+      ASPECT_REGISTER_VISUALIZATION_POSTPROCESSOR(SEMUCBTemperatureAnomaly,
+                                                  "SEMUCB temperature anomaly",
+                                                  "")
+    }
   }
 }
 #endif
