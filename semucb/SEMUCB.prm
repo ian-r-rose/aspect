@@ -46,7 +46,7 @@ subsection Model settings
 
   set Include adiabatic heating               = true
   set Include shear heating                   = true
-
+  set Remove nullspace                        = angular momentum
   set Tangential velocity boundary indicators = 0,1
 end
 
