@@ -472,7 +472,7 @@ namespace aspect
       {
         public:
           SEMUCBDensityAnomaly ()
-            :  DataPostprocessorScalar<dim> ("density anomaly", update_values | update_q_points | update_gradients)
+            :  DataPostprocessorScalar<dim> ("density_anomaly", update_values | update_q_points | update_gradients)
           {
             MantleModel::initialize();
           }
@@ -527,7 +527,7 @@ namespace aspect
       {
         public:
           SEMUCBTemperatureAnomaly ()
-            :  DataPostprocessorScalar<dim> ("temperature anomaly", update_values | update_q_points)
+            :  DataPostprocessorScalar<dim> ("temperature_anomaly", update_values | update_q_points)
           {
             MantleModel::initialize();
           }
