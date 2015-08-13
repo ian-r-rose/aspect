@@ -8,6 +8,7 @@ import ssrfpy
 
 import cartopy.crs as ccrs
 
+
 def get_radius_list( node_array ):
   assert isinstance( node_array, tables.Array)
   radii = np.array([ np.sqrt(n[0]*n[0]+n[1]*n[1]+n[2]*n[2]) for n in node_array.iterrows() ])
@@ -83,6 +84,13 @@ def get_data_handle( step_number, field_name):
 
     return nodes, field
 
+def spherical_harmonic_transform( mesh_vals ):
+    #mesh_vals should be on a GL grid
+    sys.path.append('/home/ian/SHTOOLS')
+    import pyshtools
+    zero, w = pyshtools.SHGLQ( mesh_vals.shape[0] )
+    cilm = pyshtools.SHExpandGLQ( mesh_vals, zero, w )
+    print cilm.shape
 
 if __name__ == '__main__':
     print("Loading data handles")
