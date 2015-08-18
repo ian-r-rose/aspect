@@ -302,8 +302,13 @@ namespace aspect
 
           out.thermal_expansion_coefficients[i] = MantleModel::thermal_expansivity(radius);
           out.specific_heat[i] = MantleModel::heat_capacity(radius);
-          out.thermal_conductivities[i] = reference_thermal_conductivity;
           out.compressibilities[i] = 1.0/MantleModel::bulk_modulus(radius);
+
+          //Simple parameterization of thermal conductivity for pyrolite 
+          //from Stackhouse, Stixrude, and Karki (2015)
+          const double x = in.temperature[i]/1200.;
+          const double f = (x > 1.0 ? 2./3. * std::pow(x, -0.5) + x/3. : 1.0);
+          out.thermal_conductivities[i] = (4.9 + 0.105 * in.pressure[i]/1.e9)*f/x;
 
           // Pressure derivative of entropy at the given positions.
           out.entropy_derivative_pressure[i] = 0.0;
