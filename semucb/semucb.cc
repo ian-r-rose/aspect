@@ -40,7 +40,7 @@ extern "C" {
 }
 
 const double radius_earth = 6371.e3;
-const double radius_cmb = 3489.e3;
+const double radius_cmb = 3481.e3;
 
 //Class for taking two std::vector<double> objects, and constructing a linearly interpolated
 //function from the first to the second.

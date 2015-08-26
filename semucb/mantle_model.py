@@ -5,6 +5,7 @@ from scipy.integrate import quad
 from scipy.interpolate import UnivariateSpline
 from scipy.interpolate import interp1d
 from scipy.constants import G
+from scipy.special import erfc
 
 import matplotlib.pyplot as plt
 
@@ -174,6 +175,13 @@ mantle_rock = MantleRock()
 #Calculate an adiabat with the MantleRock
 T0=1600. #Mantle potential temperature
 model_temperature = burnman.geotherm.adiabatic(mantle_pressure[::-1], T0, mantle_rock)[::-1]
+upper_boundary_temperature_drop = 1300.
+upper_boundary_thickness = 80.e3
+lower_boundary_temperature_drop = 800.
+lower_boundary_thickness = 80.e3
+upper_boundary_layer_profile = -upper_boundary_temperature_drop * erfc( (radius_earth - mantle_radius)/upper_boundary_thickness)
+lower_boundary_layer_profile = lower_boundary_temperature_drop * erfc( (mantle_radius-radius_cmb)/lower_boundary_thickness)
+model_temperature = model_temperature + lower_boundary_layer_profile + upper_boundary_layer_profile
 
 #Make the mantle model
 mantle_model = MantleModel( mantle_rock, mantle_pressure, model_temperature)
