@@ -19,9 +19,6 @@
 */
 
 
-#ifndef __aspect__initial_conditions_semucb_h
-#define __aspect__initial_conditions_semucb_h
-
 #include <deal.II/base/std_cxx11/array.h>
 #include <deal.II/base/function.h>
 #include <deal.II/numerics/data_postprocessor.h>
@@ -43,6 +40,7 @@ extern "C" {
 }
 
 const double radius_earth = 6371.e3;
+const double radius_cmb = 3489.e3;
 
 //Class for taking two std::vector<double> objects, and constructing a linearly interpolated
 //function from the first to the second.
@@ -263,6 +261,34 @@ namespace aspect
           const double r = p.norm();
           if ( r == 0.0 ) return Tensor<1,dim>();
           else return -MantleModel::gravity(r) * p / r;
+        }
+    };
+  }
+
+  namespace BoundaryTemperature
+  {
+    template <int dim>
+    class SEMUCB : public Interface<dim>
+    {
+      public:
+        virtual
+        double temperature (const GeometryModel::Interface<dim> &,
+                            const types::boundary_id,
+                            const Point<dim> &location) const
+        {
+          return MantleModel::reference_temperature( location.norm() );
+        }
+
+        virtual
+        double minimal_temperature (const std::set<types::boundary_id> &) const
+        {
+          return MantleModel::reference_temperature( radius_earth );
+        }
+
+        virtual
+        double maximal_temperature (const std::set<types::boundary_id> &) const
+        {
+          return MantleModel::reference_temperature( radius_cmb );
         }
     };
   }
@@ -659,5 +685,10 @@ namespace aspect
                                                   "")
     }
   }
+  namespace BoundaryTemperature
+  {
+    ASPECT_REGISTER_BOUNDARY_TEMPERATURE_MODEL(SEMUCB,
+                                               "SEMUCB",
+                                               "")
+  }
 }
-#endif
