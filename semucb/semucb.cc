@@ -42,6 +42,8 @@ extern "C" {
 #include <ucb_A3d.h>
 }
 
+const double radius_earth = 6371.e3;
+
 //Class for taking two std::vector<double> objects, and constructing a linearly interpolated
 //function from the first to the second.
 class LinearInterpolatedFunction
@@ -97,6 +99,58 @@ class LinearInterpolatedFunction
     boost::container::flat_map<double, double> mapping;
 };
 
+class PiecewiseConstantFunction
+{
+  public:
+
+    //Do nothing constructor
+    PiecewiseConstantFunction() {}
+
+    //Constructor that calls initialize
+    PiecewiseConstantFunction( const std::vector<double> &x, const std::vector<double> &y )
+    {
+      initialize(x,y);
+    }
+
+    //Fill a boost::container::flat_map with the x,y values.
+    //The flat map has the property that the items in it are ordered,
+    //so the input vectors do not necessarily need to be ordered, just
+    //paired such that x[i]->y[i].  The flat map also does binary searches
+    //according to a key, but unlike std::map, is implemented in a contiguous
+    //block of memory, so should have better speed and cache locality (at least in theory!)
+    void initialize( const std::vector<double> &x, const std::vector<double> &y )
+    {
+      if ( x.size() != y.size() ) std::cerr<<"Vectors given to PiecewiseConstantFunction are of different lengths!"<<std::endl;
+      mapping.reserve(x.size());
+
+
+      std::vector<double>::const_iterator xit = x.begin();
+      std::vector<double>::const_iterator yit = y.begin();
+
+      for ( ; xit != x.end(); ++xit, ++yit )
+        mapping.insert( std::pair<double, double>( *xit, *yit ) );
+    }
+
+    //Evaluate the interpolation
+    virtual double operator()( const double x ) const
+    {
+      //get an iterator to the left of the requested value
+      boost::container::flat_map<double,double>::const_iterator entry = mapping.upper_bound(x);
+
+      //If we are after the end of the map, just return the rightmost value
+      if ( entry == mapping.end() ) return (--entry)->second;
+      //If we are before the beginning of the map, just return the leftmost value
+      if ( entry == mapping.begin() ) return (entry)->second;
+
+      //Otherwise, choose the value of the lower entry
+      boost::container::flat_map<double,double>::const_iterator lower = --entry;
+      return lower->second;
+    }
+
+  private:
+    boost::container::flat_map<double, double> mapping;
+};
+
 namespace MantleModel
 {
 
@@ -111,6 +165,7 @@ namespace MantleModel
   LinearInterpolatedFunction thermal_expansivity;
   LinearInterpolatedFunction heat_capacity;
   LinearInterpolatedFunction dGdT;
+  PiecewiseConstantFunction  viscosity_profile;
 
   void initialize()
   {
@@ -124,11 +179,9 @@ namespace MantleModel
 
     char tmpline[1024];
     model_file.getline(tmpline, 1024);  // read in the header
-    while ( ! model_file.eof() )
+    double r, g, p, T, rho, vp, vs, K, G, a, c, dgdt;
+    while( model_file >> r >> g >> p >> T >> rho >> vp >> vs >> K >> G >> a >> c >> dgdt)
       {
-        double r, g, p, T, rho, vp, vs, K, G, a, c, dgdt;
-        model_file >> r >> g >> p >> T >> rho >> vp >> vs >> K >> G >> a >> c >> dgdt;
-
         //Fill the vectors of interest
         r_vec.push_back(r);
         g_vec.push_back(g);
@@ -157,6 +210,19 @@ namespace MantleModel
     heat_capacity.initialize( r_vec, c_vec );
     dGdT.initialize( r_vec, dgdt_vec );
 
+    std::ifstream viscosity_file("V2.txt"); //V2 does not have the low viscosity channel
+    std::vector<double> viscosity_radius, viscosity_value;
+    for( unsigned int i=0; i < 4; ++i ) viscosity_file.getline(tmpline, 1024); //read in header lines
+    double depth, visc;
+    while(  viscosity_file >> depth >> visc )
+      {
+        viscosity_radius.push_back( radius_earth - depth*1.e3 );
+        viscosity_value.push_back( visc * 1.e21 );
+      }
+    //Initialize the PiecewiseConstantFunction
+    viscosity_profile.initialize( viscosity_radius, viscosity_value );
+
+    //No need to reinitialize
     mantle_model_initialized = true;
   }
 }
@@ -295,7 +361,7 @@ namespace aspect
         {
           const double radius = in.position[i].norm();
 
-          out.viscosities[i] = eta;
+          out.viscosities[i] = MantleModel::viscosity_profile(radius);
           out.densities[i] = MantleModel::reference_density(radius)
                              * (1.0 + MantleModel::thermal_expansivity(radius) *
                                 (MantleModel::reference_temperature(radius) - in.temperature[i]) );
