@@ -359,36 +359,6 @@ namespace aspect
           return MantleModel::heat_capacity( reference_radius );
         }
 
-        virtual bool
-        viscosity_depends_on (const NonlinearDependence::Dependence ) const
-        {
-          return false;
-        }
-
-        virtual bool
-        density_depends_on (const NonlinearDependence::Dependence ) const
-        {
-          return false;
-        }
-
-        virtual bool
-        compressibility_depends_on (const NonlinearDependence::Dependence ) const
-        {
-          return false;
-        }
-
-        virtual bool
-        specific_heat_depends_on (const NonlinearDependence::Dependence ) const
-        {
-          return false;
-        }
-
-        virtual bool
-        thermal_conductivity_depends_on (const NonlinearDependence::Dependence ) const
-        {
-          return false;
-        }
-
         static
         void
         declare_parameters (ParameterHandler &prm);
@@ -469,6 +439,13 @@ namespace aspect
 
       initialize_semucb();
       MantleModel::initialize();
+
+      // Declare dependencies on solution variables
+      this->model_dependence.viscosity = NonlinearDependence::temperature;
+      this->model_dependence.density = NonlinearDependence::temperature | NonlinearDependence::pressure | NonlinearDependence::compositional_fields;
+      this->model_dependence.compressibility = NonlinearDependence::temperature | NonlinearDependence::pressure | NonlinearDependence::compositional_fields;
+      this->model_dependence.specific_heat = NonlinearDependence::temperature | NonlinearDependence::pressure | NonlinearDependence::compositional_fields;
+      this->model_dependence.thermal_conductivity = NonlinearDependence::temperature | NonlinearDependence::pressure;
     }
   }
 
