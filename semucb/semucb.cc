@@ -165,6 +165,32 @@ namespace MantleModel
   LinearInterpolatedFunction dGdT;
   PiecewiseConstantFunction  viscosity_profile;
 
+  double thermal_conductivity( double /*radius*/, double pressure, double temperature )
+  {
+    if( pressure < 14.e9 ) // Upper mantle
+    {
+      //Parameterization from Xu et al (2004) for olivine
+      const double k298 = 4.13;
+      const double a = 0.032;
+      return k298 * std::pow( 298./temperature, 0.5)*(1. + a*pressure/1.e9);
+    }
+    else if ( pressure <= 23.5e9 && pressure >= 14.e9 ) //transition zone
+    {
+      //Parameterization from Xu et al (2004) for wadsleyite
+      const double k298 = 8.10;
+      const double a = 0.023;
+      return k298 * std::pow( 298./temperature, 0.5)*(1. + a*pressure/1.e9);
+    }
+    else //lower mantle
+    {
+      //Simple parameterization of thermal conductivity for pyrolite
+      //from Stackhouse, Stixrude, and Karki (2015)
+      const double x = temperature/1200.;
+      const double f = (x > 1.0 ? 2./3. * std::pow(x, -0.5) + x/3. : 1.0);
+      return (4.9 + 0.105 * pressure/1.e9)*f/x;
+    }
+  }
+
   void initialize()
   {
     static bool mantle_model_initialized = false;
@@ -395,12 +421,8 @@ namespace aspect
           out.thermal_expansion_coefficients[i] = MantleModel::thermal_expansivity(radius);
           out.specific_heat[i] = MantleModel::heat_capacity(radius);
           out.compressibilities[i] = 1.0/MantleModel::bulk_modulus(radius);
+          out.thermal_conductivities[i] = MantleModel::thermal_conductivity(radius, in.pressure[i], in.temperature[i]);
 
-          //Simple parameterization of thermal conductivity for pyrolite 
-          //from Stackhouse, Stixrude, and Karki (2015)
-          const double x = in.temperature[i]/1200.;
-          const double f = (x > 1.0 ? 2./3. * std::pow(x, -0.5) + x/3. : 1.0);
-          out.thermal_conductivities[i] = (4.9 + 0.105 * in.pressure[i]/1.e9)*f/x;
 
           // Pressure derivative of entropy at the given positions.
           out.entropy_derivative_pressure[i] = 0.0;
