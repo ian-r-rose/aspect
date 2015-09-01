@@ -6,7 +6,7 @@ import scipy.interpolate as interp
 import scipy.spatial as spatial
 import ssrfpy
 
-import cartopy.crs as ccrs
+from mpl_toolkits.basemap import Basemap, shiftgrid
 
 
 def get_radius_list( node_array ):
@@ -15,7 +15,7 @@ def get_radius_list( node_array ):
   hist, bin_edges = np.histogram( radii, bins=1000) # 1000 should probably be enough
 
   dr = bin_edges[1]-bin_edges[0] #width of bins
-  cutoff = 0.2*np.max(hist)
+  cutoff = 0.1*np.max(hist)
 
   radius_list = np.array([ bin_edges[i]+dr/2.0 for i in range(len(hist)) if hist[i] > cutoff ])
 
@@ -84,13 +84,20 @@ def get_data_handle( step_number, field_name):
 
     return nodes, field
 
-def spherical_harmonic_transform( mesh_vals ):
-    #mesh_vals should be on a GL grid
-    sys.path.append('/home/ian/SHTOOLS')
-    import pyshtools
-    zero, w = pyshtools.SHGLQ( mesh_vals.shape[0] )
-    cilm = pyshtools.SHExpandGLQ( mesh_vals, zero, w )
-    print cilm.shape
+def plot_model( lons, lats, vals ):
+    plt.figure ( figsize = (16,8) )
+    m = Basemap( projection='robin', lon_0 = 0, resolution='c')
+    clip_path = m.drawmapboundary()
+    m.drawcoastlines()
+    new_vals, new_lons = shiftgrid(180., vals, lons[0,:])
+    s = m.transform_scalar( new_vals, new_lons-360., lats[:,0], 1000, 500)
+    image = m.imshow(s, cmap = plt.cm.jet, clip_path = clip_path)
+
+    plt.colorbar(image, shrink = 0.78)
+    plt.title(r'Vertical heat flux ($W/m^2$), r = %4.0f km'%(evaluation_radius/1.e3))
+    plt.savefig('heat_flux_map-%4.0f.pdf'%(evaluation_radius/1.e3), bbox='tight')
+#    plt.show()
+    plt.clf()
 
 if __name__ == '__main__':
     print("Loading data handles")
@@ -101,22 +108,17 @@ if __name__ == '__main__':
 
     print("Getting radius list")
     radius_list, dr = get_radius_list(nodes)
-    evaluation_radius = get_closest_radius(3600.e3,radius_list)
 
-    print("Evaluating depth slice")
-    lon, lat, values = depth_slice_array(nodes,field, evaluation_radius, dr)
-    print("Interpolating field")
-    mesh_lon, mesh_lat, mesh_val = ssrfpy.interpolate_regular_grid(lon,lat,values,n=180)
+#    list_to_plot = radius_list
+    list_to_plot = [get_closest_radius(5890.e3, radius_list),]
 
+    for evaluation_radius in list_to_plot:
+        print("Evaluating depth slice")
+        lon, lat, values = depth_slice_array(nodes,field, evaluation_radius, dr)
+        print("Interpolating field")
+        mesh_lons, mesh_lats, mesh_vals, mesh_weights = ssrfpy.interpolate_regular_grid(lon,lat,values,n=180, method='linear', use_legendre=True)
 
-    print("plotting")
-    ax = plt.axes(projection=ccrs.PlateCarree())
-    ax.set_global()
-    image = ax.pcolormesh(mesh_lon, mesh_lat, mesh_val, transform=ccrs.PlateCarree())
-    #image = ax.contourf(mesh_lon, mesh_lat, mesh_val,  120,
-    #                    transform=ccrs.PlateCarree())
-    ax.coastlines()
-    ax.gridlines()
-
-    plt.colorbar(image)
-    plt.show()
+        flux = np.sum(mesh_vals*mesh_weights) * evaluation_radius * evaluation_radius / 1.e12
+        print("Radius : %4.0f km,   Heat Flux : %4.0f TW" %( evaluation_radius/1.e3, flux) )
+        print("plotting")
+        plot_model( mesh_lons, mesh_lats, mesh_vals )
