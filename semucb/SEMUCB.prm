@@ -34,11 +34,12 @@ end
 
 subsection Material model
   set Model name = SEMUCB
+  set Material averaging = arithmetic average
 end
 
 subsection Mesh refinement
-  set Initial global refinement          = 2
-  set Initial adaptive refinement        = 0
+  set Initial global refinement          = 4
+  set Initial adaptive refinement        = 2
 end
 
 subsection Model settings
