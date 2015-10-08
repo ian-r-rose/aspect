@@ -29,6 +29,8 @@
 #include <aspect/initial_conditions/interface.h>
 #include <aspect/material_model/interface.h>
 #include <aspect/postprocess/visualization.h>
+#include <aspect/gravity_model/interface.h>
+#include <aspect/gravity_model/radial.h>
 
 
 const double radius_iapetus = 736.e3;
@@ -36,7 +38,121 @@ const double radius_cmb = 295.e3;
 
 namespace aspect
 {
-  using namespace dealii;
+
+  namespace GravityModel
+  {
+    using namespace dealii;
+
+    template <int dim>
+    class Centrifugal : public virtual GravityModel::Interface<dim>, public virtual SimulatorAccess<dim>
+    {
+      public:
+        virtual Tensor<1,dim> gravity_vector (const Point<dim> &position) const
+        {
+          return centrifugal_vector(position);
+        }
+
+        Tensor<1,dim> centrifugal_vector(const Point<dim> &p) const
+	{
+	  //Not the usual form, but works equally well in 2d and 3d
+	  const Point<dim> r = p - (p*rotation_axis)*rotation_axis;
+	  return Omega*Omega*r;
+	}
+
+        virtual void initialize_simulator(const Simulator<dim> &sim)
+        {
+          SimulatorAccess<dim>::initialize_simulator(sim);
+        }
+
+	static void declare_parameters (ParameterHandler &prm)
+	{
+	  prm.enter_subsection("Gravity model");
+	  {
+	    prm.enter_subsection("Centrifugal");
+	    {
+	      prm.declare_entry ("Omega", "7.29e-5",
+				 Patterns::Double (0),
+				 "Angular velocity of the planet, rad/s.");
+	    }
+	    prm.leave_subsection ();
+	  }
+	  prm.leave_subsection ();
+	}
+
+	void parse_parameters (ParameterHandler &prm)
+	{
+	  prm.enter_subsection("Gravity model");
+	  {
+	    prm.enter_subsection("Centrifugal");
+	    {
+	      Omega = prm.get_double ("Omega");
+	    }
+	    prm.leave_subsection ();
+	  }
+	  prm.leave_subsection ();
+
+          rotation_axis = Tensor<1,dim>();
+          rotation_axis[dim-1] = 1.0;
+	}
+
+      private:
+
+        double Omega;  //angular velocity of the planet
+	Tensor<1,dim> rotation_axis; //axis of rotation unit vector
+        
+    };
+
+    template <int dim>
+    class RadialConstantWithCentrifugal : public virtual GravityModel::Interface<dim>, public virtual SimulatorAccess<dim>
+    {
+      public:
+        virtual Tensor<1,dim> gravity_vector (const Point<dim> &p) const
+        {
+          return gravity.gravity_vector(p) + centrifugal.gravity_vector(p);
+        }
+
+        virtual void initialize_simulator(const Simulator<dim> &sim)
+        {
+          centrifugal.initialize_simulator(sim);
+        }
+        
+        void parse_parameters( ParameterHandler &prm )
+	{
+	  gravity.parse_parameters(prm);
+	  centrifugal.parse_parameters(prm);
+        }
+
+      private:
+         Centrifugal<dim> centrifugal;
+         RadialConstant<dim> gravity;
+    };
+
+    template <int dim>
+    class RadialLinearWithCentrifugal : public virtual GravityModel::Interface<dim>, public virtual SimulatorAccess<dim>
+    {
+      public:
+        virtual Tensor<1,dim> gravity_vector (const Point<dim> &p) const
+        {
+          return gravity.gravity_vector(p) + centrifugal.gravity_vector(p);
+        }
+
+        virtual void initialize_simulator(const Simulator<dim> &sim)
+        {
+          centrifugal.initialize_simulator(sim);
+        }
+        
+        void parse_parameters( ParameterHandler &prm )
+	{
+	  gravity.parse_parameters(prm);
+	  centrifugal.parse_parameters(prm);
+        }
+
+      private:
+         Centrifugal<dim> centrifugal;
+         RadialLinear<dim> gravity;
+    };
+
+  }
 
   namespace BoundaryTemperature
   {
@@ -397,5 +513,19 @@ namespace aspect
     ASPECT_REGISTER_BOUNDARY_TEMPERATURE_MODEL(Iapetus,
                                                "iapetus",
                                                "")
+  }
+
+  namespace GravityModel
+  {
+    ASPECT_REGISTER_GRAVITY_MODEL(Centrifugal,
+                                  "centrifugal",
+                                  "what it sounds like.")
+    ASPECT_REGISTER_GRAVITY_MODEL(RadialConstantWithCentrifugal,
+                                  "radial constant with centrifugal",
+                                  "what it sounds like.")
+    ASPECT_REGISTER_GRAVITY_MODEL(RadialLinearWithCentrifugal,
+                                  "radial constant with centrifugal",
+                                  "what it sounds like.")
+
   }
 }

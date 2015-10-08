@@ -25,8 +25,8 @@ end
 
 
 subsection Model settings
-  set Zero velocity boundary indicators       = inner,outer
-  set Free surface boundary indicators        = # outer
+  set Zero velocity boundary indicators       = inner# ,outer
+  set Free surface boundary indicators        = outer
   set Fixed temperature boundary indicators   = inner, outer
   set Include shear heating                   = false
   set Include adiabatic heating               = false
@@ -61,6 +61,9 @@ subsection Gravity model
   set Model name = radial constant
   subsection Radial constant
     set Magnitude = 2.23e-1
+  end
+  subsection Centrifugal
+    set Omega = 1.e-4
   end
 end
 
