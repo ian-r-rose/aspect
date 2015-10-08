@@ -7,10 +7,19 @@ set Pressure normalization                 = no
 set Additional shared libraries            = ./libiapetus.so
 set Nonlinear solver scheme                = iterated Stokes
 set Max nonlinear iterations               = 10
+set CFL number = 0.4
 
 
 subsection Material model
   set Model name = ice_1h
+  subsection Simpler model
+    set Reference density             = 935.
+    set Reference specific heat       = 1500.
+    set Reference temperature         = 273.
+    set Thermal conductivity          = 1e-6
+    set Thermal expansion coefficient = 1.e-4
+    set Viscosity                     = 1.e16
+  end
 end
 
 
@@ -58,7 +67,7 @@ end
 
 
 subsection Gravity model
-  set Model name = radial constant
+  set Model name = radial constant with centrifugal
   subsection Radial constant
     set Magnitude = 2.23e-1
   end
@@ -71,7 +80,7 @@ end
 subsection Mesh refinement
   set Initial global refinement          = 4
   set Initial adaptive refinement        = 2
-  set Strategy                           = strain rate
+  set Strategy                           = strain rate, temperature
   set Time steps between mesh refinement = 10
 end
 
