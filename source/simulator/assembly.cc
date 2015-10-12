@@ -1432,7 +1432,7 @@ namespace aspect
                                    internal::Assembly::Scratch::AdvectionSystem<dim> &scratch,
                                    internal::Assembly::CopyData::AdvectionSystem<dim> &data)
   {
-    const bool use_bdf2_scheme = (timestep_number > 1);
+    const bool use_bdf2_scheme = (timestep_number > 1 && false);
 
     const unsigned int n_q_points    = scratch.finite_element_values.n_quadrature_points;
 

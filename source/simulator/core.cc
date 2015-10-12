@@ -1638,7 +1638,7 @@ namespace aspect
     // start any scheme with an extrapolated value from the previous
     // two time steps if those are available
     current_linearization_point = old_solution;
-    if (timestep_number > 1)
+    if (timestep_number > 1 && false)
       {
         //TODO: Trilinos sadd does not like ghost vectors even as input. Copy
         //into distributed vectors for now:
