@@ -426,10 +426,11 @@ namespace aspect
           if( dealii::Utilities::MPI::this_mpi_process(this->get_mpi_communicator())==0)
             {
               std::ofstream outfile;
+              std::string filename =  (this->get_output_directory() + "core_temperature.txt");
               if (this->get_timestep_number() == 0)
-                outfile.open("core_temperature.txt", std::ios::out);
+                outfile.open(filename.c_str(), std::ios::out);
               else
-                outfile.open("core_temperature.txt", std::ios::app);
+                outfile.open(filename.c_str(), std::ios::app);
 
               const double time = this->get_time();
               for (unsigned int i=0; i<N; ++i)
