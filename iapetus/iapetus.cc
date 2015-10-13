@@ -21,7 +21,9 @@
 
 #include <deal.II/base/std_cxx11/array.h>
 #include <deal.II/base/function.h>
+#include <deal.II/base/quadrature_lib.h>
 #include <deal.II/numerics/data_postprocessor.h>
+#include <deal.II/fe/fe_values.h>
 
 #include <aspect/utilities.h>
 #include <aspect/simulator.h>
@@ -249,13 +251,116 @@ namespace aspect
         virtual
         void update()
         {
-          //scale the heat flux to an equivalent 3D value
-          const double Q = -1.e-2;
-          update_temperature( Q, this->get_time(), this->get_timestep() );
+          const double Q = compute_heat_flux();
+          update_temperature( -Q, this->get_time(), this->get_timestep() );
           output_temperature_profile();
         }
 
       private:
+
+        double compute_heat_flux()
+        {
+	  // create a quadrature formula based on the temperature element alone.
+	  const QGauss<dim-1> quadrature_formula (this->get_fe().base_element(this->introspection().base_elements.temperature).degree+1);
+
+	  FEFaceValues<dim> fe_face_values (this->get_mapping(),
+					    this->get_fe(),
+					    quadrature_formula,
+					    update_gradients      | update_values |
+					    update_normal_vectors |
+					    update_q_points       | update_JxW_values);
+
+          const types::boundary_id inner_boundary(0.);
+
+	  std::vector<Tensor<1,dim> > temperature_gradients (quadrature_formula.size());
+	  std::vector<std::vector<double> > composition_values (this->n_compositional_fields(),std::vector<double> (quadrature_formula.size()));
+
+	  double local_flux = 0.;
+          double local_surface_area = 0.;
+
+	  typename DoFHandler<dim>::active_cell_iterator
+	  cell = this->get_dof_handler().begin_active(),
+	  endc = this->get_dof_handler().end();
+
+	  MaterialModel::MaterialModelInputs<dim> in(fe_face_values.n_quadrature_points, this->n_compositional_fields());
+	  MaterialModel::MaterialModelOutputs<dim> out(fe_face_values.n_quadrature_points, this->n_compositional_fields());
+
+	  // for every surface face on which it makes sense to compute a
+	  // heat flux and that is owned by this processor,
+	  // integrate the normal heat flux given by the formula
+	  //   j =  - k * n . grad T
+	  //
+	  // for the spherical shell geometry, note that for the inner boundary,
+	  // the normal vector points *into* the core, i.e. we compute the flux
+	  // *out* of the mantle, not into it. we fix this when we add the local
+	  // contribution to the global flux
+	  for (; cell!=endc; ++cell)
+	    if (cell->is_locally_owned())
+	      for (unsigned int f=0; f<GeometryInfo<dim>::faces_per_cell; ++f)
+		if (cell->at_boundary(f))
+		  {
+		    const types::boundary_id boundary_indicator
+#if DEAL_II_VERSION_GTE(8,3,0)
+		      = cell->face(f)->boundary_id();
+#else
+		      = cell->face(f)->boundary_indicator();
+#endif
+                    if (boundary_indicator != inner_boundary) continue;
+
+		    fe_face_values.reinit (cell, f);
+		    fe_face_values[this->introspection().extractors.temperature].get_function_gradients (this->get_solution(),
+			temperature_gradients);
+		    fe_face_values[this->introspection().extractors.temperature].get_function_values (this->get_solution(),
+			in.temperature);
+		    fe_face_values[this->introspection().extractors.pressure].get_function_values (this->get_solution(),
+												   in.pressure);
+		    fe_face_values[this->introspection().extractors.velocities].get_function_values (this->get_solution(),
+			in.velocity);
+		    fe_face_values[this->introspection().extractors.pressure].get_function_gradients (this->get_solution(),
+			in.pressure_gradient);
+		    for (unsigned int c=0; c<this->n_compositional_fields(); ++c)
+		      fe_face_values[this->introspection().extractors.compositional_fields[c]].get_function_values(this->get_solution(),
+			  composition_values[c]);
+
+		    in.position = fe_face_values.get_quadrature_points();
+
+		    // since we are not reading the viscosity and the viscosity
+		    // is the only coefficient that depends on the strain rate,
+		    // we need not compute the strain rate. set the corresponding
+		    // array to empty, to prevent accidental use and skip the
+		    // evaluation of the strain rate in evaluate().
+		    in.strain_rate.resize(0);
+
+		    for (unsigned int i=0; i<fe_face_values.n_quadrature_points; ++i)
+		      {
+			for (unsigned int c=0; c<this->n_compositional_fields(); ++c)
+			  in.composition[i][c] = composition_values[c][i];
+		      }
+		    in.cell = &cell;
+
+		    this->get_material_model().evaluate(in, out);
+
+
+		    for (unsigned int q=0; q<fe_face_values.n_quadrature_points; ++q)
+		      {
+			const double thermal_conductivity
+			  = out.thermal_conductivities[q];
+
+			local_flux += -thermal_conductivity *
+                                      (temperature_gradients[q] *
+                                      fe_face_values.normal_vector(q)) *
+                                      fe_face_values.JxW(q);
+
+                        local_surface_area += fe_face_values.JxW(q);
+		      }
+		  }
+
+	  // then collect contributions from all processors
+	  const double global_flux = dealii::Utilities::MPI::sum (local_flux, this->get_mpi_communicator());
+          const double global_surface_area = dealii::Utilities::MPI::sum (local_surface_area, this->get_mpi_communicator());
+
+          return global_flux/global_surface_area;
+        }
 
         void update_temperature( const double heat_flux, const double time, const double dt )
         {
