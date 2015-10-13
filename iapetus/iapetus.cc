@@ -41,6 +41,8 @@ const double radius_iapetus = 736.e3;
 const double radius_cmb = 295.e3;
 const double initial_temperature = 220.;
 const double surface_temperature = 90.;
+const double core_reference_density = 3500.;
+const double core_reference_cp = 1250.;
 
 class Radioisotope
 {
@@ -251,8 +253,8 @@ namespace aspect
         virtual
         void update()
         {
-          const double Q = compute_heat_flux();
-          update_temperature( -Q, this->get_time(), this->get_timestep() );
+          const double Q = compute_heat_flux()/core_reference_cp;
+          update_temperature( Q, this->get_time(), this->get_timestep() );
           output_temperature_profile();
         }
 
