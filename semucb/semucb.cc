@@ -647,6 +647,74 @@ namespace aspect
                                           - MantleModel::reference_temperature(evaluation_points[q].norm());
 	  }
       };
+      template <int dim>
+      class AdvectiveHeatFluxAnomaly
+        : public DataPostprocessorScalar<dim>,
+          public SimulatorAccess<dim>,
+          public Interface<dim>
+      {
+        public:
+          AdvectiveHeatFluxAnomaly ()
+            : DataPostprocessorScalar<dim> ("advective_heat_flux_anomaly",
+                                             update_values | update_q_points | update_gradients)
+          {}
+
+          virtual
+          void
+          compute_derived_quantities_vector (const std::vector<Vector<double> >              &uh,
+                                             const std::vector<std::vector<Tensor<1,dim> > > &duh,
+                                             const std::vector<std::vector<Tensor<2,dim> > > &,
+                                             const std::vector<Point<dim> >                  &,
+                                             const std::vector<Point<dim> >                  &evaluation_points,
+                                             std::vector<Vector<double> >                    &computed_quantities) const
+          {
+	    const unsigned int n_quadrature_points = uh.size();
+	    Assert (computed_quantities.size() == n_quadrature_points,    ExcInternalError());
+	    Assert (computed_quantities[0].size() == 1,                   ExcInternalError());
+	    Assert (uh[0].size() == this->introspection().n_components,           ExcInternalError());
+
+	    MaterialModel::MaterialModelInputs<dim> in(n_quadrature_points,
+						       this->n_compositional_fields());
+	    MaterialModel::MaterialModelOutputs<dim> out(n_quadrature_points,
+							 this->n_compositional_fields());
+
+	    //Create vector for the temperature gradients.  All the other things
+	    //we need are in MaterialModelInputs/Outputs
+	    std::vector<Tensor<1,dim> > temperature_gradient(n_quadrature_points);
+
+	    in.position = evaluation_points;
+	    in.strain_rate.resize(0); // we do not need the viscosity
+	    for (unsigned int q=0; q<n_quadrature_points; ++q)
+	      {
+		in.pressure[q]=uh[q][this->introspection().component_indices.pressure];
+		in.temperature[q]=uh[q][this->introspection().component_indices.temperature];
+		for (unsigned int d = 0; d < dim; ++d)
+		  {
+		    in.velocity[q][d]=uh[q][this->introspection().component_indices.velocities[d]];
+		    in.pressure_gradient[q][d] = duh[q][this->introspection().component_indices.pressure][d];
+		    temperature_gradient[q][d] = duh[q][this->introspection().component_indices.temperature][d];
+		  }
+
+		for (unsigned int c=0; c<this->n_compositional_fields(); ++c)
+		  in.composition[q][c] = uh[q][this->introspection().component_indices.compositional_fields[c]];
+	      }
+
+	    this->get_material_model().evaluate(in, out);
+
+	    for (unsigned int q=0; q<n_quadrature_points; ++q)
+	      {
+		const Tensor<1,dim> gravity = this->get_gravity_model().gravity_vector(in.position[q]);
+		const Tensor<1,dim> vertical = -gravity/( gravity.norm() != 0.0 ?
+							  gravity.norm() : 1.0 );
+		const double advective_flux = (in.velocity[q] * vertical) * in.temperature[q] *
+					      out.densities[q]*out.specific_heat[q];
+		const double ref_advective_flux = (in.velocity[q] * vertical) *  
+                                                  MantleModel::reference_temperature(evaluation_points[q].norm()) *
+                                                  out.densities[q]*out.specific_heat[q];
+		computed_quantities[q](0) = advective_flux - ref_advective_flux;
+	      }
+	    }
+      };
     }
   }
 }
@@ -681,6 +749,9 @@ namespace aspect
                                                   "")
       ASPECT_REGISTER_VISUALIZATION_POSTPROCESSOR(SEMUCBTemperatureAnomaly,
                                                   "SEMUCB temperature anomaly",
+                                                  "")
+      ASPECT_REGISTER_VISUALIZATION_POSTPROCESSOR(AdvectiveHeatFluxAnomaly,
+                                                  "advective heat flux anomaly",
                                                   "")
     }
   }
