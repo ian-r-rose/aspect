@@ -32,9 +32,52 @@
 #include <aspect/gravity_model/interface.h>
 #include <aspect/gravity_model/radial.h>
 
+#include <fstream>
+
 
 const double radius_iapetus = 736.e3;
 const double radius_cmb = 295.e3;
+const double initial_temperature = 220.;
+const double surface_temperature = 90.;
+
+class Radioisotope
+{
+  public:
+    Radioisotope( const double initial_heating, const double decay_constant )
+      : q0(initial_heating), lambda(decay_constant) {}
+
+    double heat ( const double time ) const
+    {
+      return q0 * std::exp( -lambda * time );
+    }
+  private:
+    const double q0;
+    const double lambda;
+};
+
+class Chondrite
+{
+  public:
+    Chondrite()
+      : U238( 1.6e-12, 1.55e-10/aspect::year_in_seconds), 
+        U235( 2.99e-12, 9.84e-10/aspect::year_in_seconds),
+        Th232( 1.00e-12, 4.95e-11/aspect::year_in_seconds),
+        K40Ca( 1.43e-11, 4.96e-10/aspect::year_in_seconds),
+        K40Ar( 6.36e-13, 5.81e-10/aspect::year_in_seconds)
+    {}
+
+    double heat( const double time ) const
+    {
+      return U238.heat(time) + U235.heat(time) + Th232.heat(time) + K40Ca.heat(time) + K40Ar.heat(time);
+    }
+
+  private:
+    const Radioisotope U238;
+    const Radioisotope U235;
+    const Radioisotope Th232;
+    const Radioisotope K40Ca;
+    const Radioisotope K40Ar;
+};
 
 namespace aspect
 {
@@ -157,28 +200,146 @@ namespace aspect
   namespace BoundaryTemperature
   {
     template <int dim>
-    class Iapetus : public Interface<dim>
+    class Iapetus : public Interface<dim>, public SimulatorAccess<dim>
     {
       public:
-        virtual
-        double temperature (const GeometryModel::Interface<dim> &,
-                            const types::boundary_id,
-                            const Point<dim> &location) const
+
+        Iapetus ()
+          : R(radius_cmb), 
+            N(100),
+            dr( R/(N-1) ),
+            kappa(1.e-6),
+            conductivity(4.)
         {
-          return 220.;
+          T.assign( N, initial_temperature);
+          r.assign( N, 0.0 );
+
+          for( unsigned int i = 0; i<N; ++i)
+            r[i] = dr*i;
+        }
+
+        virtual
+        double temperature (const GeometryModel::Interface<dim> &gm,
+                            const types::boundary_id id,
+                            const Point<dim> &) const
+        {
+          const std::string boundary_name = gm.translate_id_to_symbol_name(id);
+
+          if (boundary_name == "inner")
+            return T.back();
+          else if (boundary_name =="outer")
+            return surface_temperature;
+          else
+            this->get_pcout()<<"Unknown boundary indicator ??"<<std::endl;
+          return T.back();
         }
 
         virtual
         double minimal_temperature (const std::set<types::boundary_id> &) const
         {
-          return 220.;
+          return surface_temperature;
         }
 
         virtual
         double maximal_temperature (const std::set<types::boundary_id> &) const
         {
-          return 220.;
+          return T.back();
         }
+
+        virtual
+        void update()
+        {
+          //scale the heat flux to an equivalent 3D value
+          const double Q = -1.e-2;
+          update_temperature( Q, this->get_time(), this->get_timestep() );
+          output_temperature_profile();
+        }
+
+      private:
+
+        void update_temperature( const double heat_flux, const double time, const double dt )
+        {
+          const double eta = kappa*dt/2./dr/dr; 
+          std::vector<double> a(N, 0.);
+          std::vector<double> b(N, 0.);
+          std::vector<double> c(N, 0.);
+          std::vector<double> rhs(N, 0.);
+
+          //Setup the tridiagonal system, where `a` is the lower diagonal,
+          //`b`	is the diagonal, and `c` is the upper diagonal
+
+          //Handle the lower bc, dTdr = 0
+          b[0] = 1.;
+          c[0] = -1.;
+          //handle the internal nodes
+          for (unsigned int i=1; i < N-1; ++i)
+            {
+              //assemble lhs matrix
+              a[i] = -eta*r[i-1]/r[i];
+              b[i] = 1. + 2.*eta;
+              c[i] = -eta*r[i+1]/r[i];
+
+              //diffusion part of rhs
+              rhs[i] = (eta*r[i-1]/r[i]) * T[i-1] + 
+                       (1. - 2.*eta) * T[i] + 
+                       (eta*r[i+1]/r[i]) * T[i+1] ;
+              //heating part of rhs
+              rhs[i] += 0.5*dt*(rock.heat(time)+rock.heat(time+dt));
+            }
+          //handle the upper bc, k dTdr = Q
+          a[N-1] = -1.;
+          b[N-1] = 1.;
+          rhs[N-1] = heat_flux * dr / conductivity;
+
+          //Solve the system using the tridiagonal Thomas algorithm
+          std::vector<double> c_prime(N, 0.);
+          std::vector<double> d_prime(N, 0.);
+          std::vector<double> Tnew(N, 0.);
+
+          c_prime[0] = c[0]/b[0];
+          d_prime[0] = rhs[0]/b[0];
+
+          for (unsigned int i=1; i < N-1; ++i)
+            {
+              c_prime[i] = c[i]/(b[i] - a[i]*c_prime[i-1]);
+              d_prime[i] = (rhs[i] - a[i]*d_prime[i-1])/(b[i] - a[i]*c_prime[i-1]);
+            }
+          d_prime[N-1] = (rhs[N-1] - a[N-1]*d_prime[N-2])/(b[N-1] - a[N-1]*c_prime[N-2]);
+
+          Tnew[N-1] = d_prime[N-1];
+          for (int i=N-2; i >= 0; --i)
+            Tnew[i] = d_prime[i] - c_prime[i]*Tnew[i+1];
+
+          //Update the temperature
+          T = Tnew;
+        }
+
+        void output_temperature_profile()
+        {
+          if( dealii::Utilities::MPI::this_mpi_process(this->get_mpi_communicator())==0)
+            {
+              std::ofstream outfile;
+              if (this->get_timestep_number() == 0)
+                outfile.open("core_temperature.txt", std::ios::out);
+              else
+                outfile.open("core_temperature.txt", std::ios::app);
+
+              const double time = this->get_time();
+              for (unsigned int i=0; i<N; ++i)
+                outfile<<time<<"\t"<<r[i]<<"\t"<<T[i]<<std::endl;
+              outfile.close();
+            }
+          }
+
+        std::vector<double> T; //temperature
+        std::vector<double> r;
+
+        const double R;
+        const unsigned int N;
+        const double dr;
+        const double kappa;
+        const double conductivity;
+        const Chondrite rock;
     };
   }
 
@@ -277,7 +438,7 @@ namespace aspect
     template <int dim>
     double
     Ice_1h<dim>::
-    calculate_viscosity(const double pressure, const double temperature,
+    calculate_viscosity(const double, const double temperature,
                         const SymmetricTensor<2,dim> &strain_rate) const
     {
       const double edot_ii = std::max( std::sqrt( std::fabs( second_invariant( deviator(strain_rate)))),
@@ -447,7 +608,7 @@ namespace aspect
          * Return the initial temperature as a function of position.
          */
         virtual
-        double initial_temperature (const Point<dim> &position) const
+        double initial_temperature (const Point<dim> &) const
         {
           return 220.;
         }
