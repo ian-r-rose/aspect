@@ -6,6 +6,8 @@ set Use years in output instead of seconds = true
 set Output directory                       = output
 set Linear solver tolerance                = 1e-5
 set Pressure normalization                 = surface
+set Nonlinear solver scheme                 = Stokes only
+set Max nonlinear iterations               = 6
 set Surface pressure                       = 0
 
 subsection Geometry model
@@ -56,7 +58,7 @@ subsection Postprocess
 
   subsection Visualization
     set Output format                 = hdf5
-    set List of output variables      = density, viscosity, gravity, SEMUCB temperature anomaly, SEMUCB density anomaly, vertical heat flux
+    set List of output variables      = density, viscosity, gravity, SEMUCB temperature anomaly, SEMUCB density anomaly, vertical heat flux, advective heat flux anomaly
     set Time between graphical output = 0
     set Number of grouped files       = 1 
   end
