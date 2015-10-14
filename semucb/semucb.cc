@@ -368,6 +368,8 @@ namespace aspect
         parse_parameters (ParameterHandler &prm);
 
       private:
+        double compute_viscosity( const double radius, const double temperature ) const;
+
         double reference_radius;
         double eta;
         double reference_thermal_conductivity;
@@ -383,7 +385,7 @@ namespace aspect
         {
           const double radius = in.position[i].norm();
 
-          out.viscosities[i] = MantleModel::viscosity_profile(radius);
+          out.viscosities[i] = compute_viscosity(radius, in.temperature[i]);
           out.densities[i] = MantleModel::reference_density(radius)
                              * (1.0 + MantleModel::thermal_expansivity(radius) *
                                 (MantleModel::reference_temperature(radius) - in.temperature[i]) );
@@ -404,6 +406,25 @@ namespace aspect
           for (unsigned int c=0; c<in.composition[i].size(); ++c)
             out.reaction_terms[i][c] = 0.0;
         }
+    }
+
+    template<int dim>
+    double
+    SEMUCB<dim>::compute_viscosity( const double radius, const double temperature ) const
+    {
+      const double ref_viscosity = MantleModel::viscosity_profile(radius);
+      const double ref_T = MantleModel::reference_temperature(radius);
+
+      const double activation_enthalpy = 300.e3; //Joules per mol
+      const double delta_T = temperature - ref_T;
+      const double m_over_n = 1.0;  //diffusion creep exponent over grain growth exponent
+      const double H_g_over_H_d = 0.5; //Relative activation enthalpy of grain growth
+
+      const double temperature_factor = std::exp( -activation_enthalpy/(constants::gas_constant * ref_T) * 
+                                                  (1.- m_over_n * H_g_over_H_d) * 
+                                                  delta_T/ref_T );
+
+      return ref_viscosity * temperature_factor;
     }
 
     template <int dim>
