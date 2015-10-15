@@ -326,6 +326,7 @@ namespace aspect
     class SEMUCB : public MaterialModel::Interface<dim>, public ::aspect::SimulatorAccess<dim>
     {
       public:
+        SEMUCB() : max_visc(1.e24), min_visc(1.e20) {}
 
         virtual void evaluate(const MaterialModel::MaterialModelInputs<dim> &in,
                               MaterialModel::MaterialModelOutputs<dim> &out) const;
@@ -373,6 +374,9 @@ namespace aspect
         double reference_radius;
         double eta;
         double reference_thermal_conductivity;
+
+        const double max_visc;
+        const double min_visc;
     };
 
     template <int dim>
@@ -424,7 +428,7 @@ namespace aspect
                                                   (1.- m_over_n * H_g_over_H_d) * 
                                                   delta_T/ref_T );
 
-      return ref_viscosity * temperature_factor;
+      return std::max(std::min(ref_viscosity * temperature_factor, max_visc), min_visc);
     }
 
     template <int dim>
