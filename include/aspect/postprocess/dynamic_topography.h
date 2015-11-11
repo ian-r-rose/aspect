@@ -32,7 +32,7 @@ namespace aspect
   {
 
     /**
-     * A postprocessor that computes dynamic topography at the surface.
+     * A postprocessor that computes dynamic topography at the top and bottom of the domain.
      *
      * @ingroup Postprocessing
      */
@@ -47,32 +47,50 @@ namespace aspect
         std::pair<std::string,std::string>
         execute (TableHandler &statistics);
 
+        /**
+         * Return the topography vector as calculated by CBF formulation
+         */
+        const LinearAlgebra::BlockVector &
+        get_topography_vector() const;
 
         /**
-         * Declare the parameters this class takes through input files.
+         * Register the other postprocessor that we need: BoundaryPressures
          */
+        virtual
+        std::list<std::string>
+        required_other_postprocessors() const;
+        
+        void
+        parse_parameters (ParameterHandler &prm);
+
         static
         void
         declare_parameters (ParameterHandler &prm);
 
-        /**
-         * Read the parameters this class declares from the parameter file.
-         */
-        virtual
-        void
-        parse_parameters (ParameterHandler &prm);
-
       private:
         /**
-         * A parameter that we read from the input file that denotes whether
-         * we should subtract the mean topography or not.
+         * A vector which stores the surface stress values calculated
+         * by the postprocessor.
          */
-        bool subtract_mean_dyn_topography;
+        LinearAlgebra::BlockVector surface_stress_vector;
 
         /**
-         * A parameter allows users to set the density value outside the surface
+         * A vector which stores the surface stress values calculated
+         * by the postprocessor.
+         */
+        LinearAlgebra::BlockVector topo_vector;
+
+        /**
+         * A parameter allows users to set the density value
+         * above the top surface.
          */
         double density_above;
+
+        /**
+         * A parameter allows users to set the density value
+         * below the bottom surface.
+         */
+        double density_below;
     };
   }
 }

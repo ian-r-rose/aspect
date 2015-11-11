@@ -19,7 +19,11 @@
 */
 
 
+#include <aspect/simulator.h>
 #include <aspect/postprocess/dynamic_topography.h>
+
+#include <aspect/postprocess/boundary_pressures.h>
+#include <aspect/postprocess/boundary_densities.h>
 
 #include <deal.II/base/quadrature_lib.h>
 #include <deal.II/fe/fe_values.h>
@@ -32,9 +36,30 @@ namespace aspect
     std::pair<std::string,std::string>
     DynamicTopography<dim>::execute (TableHandler &)
     {
-      const unsigned int quadrature_degree = this->get_fe().base_element(this->introspection().base_elements.velocities).degree;
+      Postprocess::BoundaryPressures<dim> *boundary_pressures = 
+                   this->template find_postprocessor<Postprocess::BoundaryPressures<dim> >();
+      AssertThrow(boundary_pressures != NULL,
+                  ExcMessage("Could not find the BoundaryPressures postprocessor") );
+      const double surface_pressure = boundary_pressures->pressure_at_top();
+      const double bottom_pressure = boundary_pressures->pressure_at_top();
+
+      Postprocess::BoundaryDensities<dim> *boundary_densities = 
+                   this->template find_postprocessor<Postprocess::BoundaryDensities<dim> >();
+      AssertThrow(boundary_densities != NULL,
+                  ExcMessage("Could not find the BoundaryDensities postprocessor") );
+      const double surface_density = boundary_densities->density_at_top();
+      const double bottom_density = boundary_densities->density_at_top();
+
+      const unsigned int quadrature_degree = this->get_fe().base_element(this->introspection().base_elements.velocities).degree+1;
+      //Gauss quadrature in the interior for best accuracy
       const QGauss<dim> quadrature_formula(quadrature_degree);
-      const QGauss<dim-1> quadrature_formula_face(quadrature_degree);
+      //GLL quadrature on the surface to get a diagonal mass matrix
+      const QGaussLobatto<dim-1> quadrature_formula_face(quadrature_degree);
+
+      const unsigned int dofs_per_cell = this->get_fe().dofs_per_cell;
+      const unsigned int dofs_per_face = this->get_fe().dofs_per_face;
+      const unsigned int n_q_points = quadrature_formula.size();
+      const unsigned int n_face_q_points = quadrature_formula_face.size();
 
       FEValues<dim> fe_values (this->get_mapping(),
                                this->get_fe(),
@@ -47,20 +72,45 @@ namespace aspect
       FEFaceValues<dim> fe_face_values (this->get_mapping(),
                                         this->get_fe(),
                                         quadrature_formula_face,
-                                        update_JxW_values);
+                                        update_JxW_values | update_values | update_q_points);
 
       MaterialModel::MaterialModelInputs<dim> in(fe_values.n_quadrature_points, this->n_compositional_fields());
       MaterialModel::MaterialModelOutputs<dim> out(fe_values.n_quadrature_points, this->n_compositional_fields());
 
+      MaterialModel::MaterialModelInputs<dim> in_face(fe_face_values.n_quadrature_points, this->n_compositional_fields());
+      MaterialModel::MaterialModelOutputs<dim> out_face(fe_face_values.n_quadrature_points, this->n_compositional_fields());
+
       std::vector<std::vector<double> > composition_values (this->n_compositional_fields(),std::vector<double> (quadrature_formula.size()));
+      std::vector<std::vector<double> > face_composition_values (this->n_compositional_fields(),std::vector<double> (quadrature_formula_face.size()));
+
+      //Storage for shape function values in solving CBF system
+      std::vector<Tensor<1,dim> > phi_u (dofs_per_cell);
+      std::vector<SymmetricTensor<2,dim> > epsilon_phi_u (dofs_per_cell);
+      std::vector<double> div_phi_u (dofs_per_cell);
+      std::vector<double> div_solution(n_q_points);
+
+      //Vectors for solving CBF system
+      Vector<double> local_vector(dofs_per_cell);
+      Vector<double> local_mass_matrix(dofs_per_cell);
+
+      LinearAlgebra::BlockVector rhs_vector(this->introspection().index_sets.system_partitioning, this->get_mpi_communicator());
+      LinearAlgebra::BlockVector mass_matrix(this->introspection().index_sets.system_partitioning, this->get_mpi_communicator());
+
+      LinearAlgebra::BlockVector distributed_stress_vector(this->introspection().index_sets.system_partitioning, this->get_mpi_communicator());
+      LinearAlgebra::BlockVector distributed_topo_vector(this->introspection().index_sets.system_partitioning, this->get_mpi_communicator());
+
+      surface_stress_vector.reinit(this->introspection().index_sets.system_partitioning, 
+                                   this->introspection().index_sets.system_relevant_partitioning, 
+                                   this->get_mpi_communicator());
+      topo_vector.reinit(this->introspection().index_sets.system_partitioning, 
+                         this->introspection().index_sets.system_relevant_partitioning, 
+                         this->get_mpi_communicator());
+      surface_stress_vector = 0.;
+      topo_vector = 0.;
 
       // have a stream into which we write the data. the text stream is then
       // later sent to processor 0
       std::ostringstream output;
-
-      double integrated_topography = 0;
-      double integrated_surface_area = 0;
-
       std::vector<std::pair<Point<dim>,double> > stored_values;
 
       // loop over all of the surface cells and if one less than h/3 away from
@@ -87,6 +137,10 @@ namespace aspect
                   continue;
               }
               fe_values.reinit (cell);
+              fe_face_values.reinit (cell, top_face_idx);
+
+              local_vector = 0.;
+              local_mass_matrix = 0.;
 
               // get the various components of the solution, then
               // evaluate the material properties there
@@ -100,6 +154,8 @@ namespace aspect
               .get_function_symmetric_gradients (this->get_solution(), in.strain_rate);
               fe_values[this->introspection().extractors.pressure]
               .get_function_gradients (this->get_solution(), in.pressure_gradient);
+              fe_values[this->introspection().extractors.velocities]
+              .get_function_divergences (this->get_solution(), div_solution);
 
               in.position = fe_values.get_quadrature_points();
 
@@ -107,7 +163,7 @@ namespace aspect
                 fe_values[this->introspection().extractors.compositional_fields[c]]
                 .get_function_values(this->get_solution(),
                                      composition_values[c]);
-              for (unsigned int i=0; i<fe_values.n_quadrature_points; ++i)
+              for (unsigned int i=0; i<n_q_points; ++i)
                 {
                   for (unsigned int c=0; c<this->n_compositional_fields(); ++c)
                     in.composition[i][c] = composition_values[c][i];
@@ -116,83 +172,159 @@ namespace aspect
 
               this->get_material_model().evaluate(in, out);
 
+              // get the various components of the solution, then
+              // evaluate the material properties there
+              fe_face_values[this->introspection().extractors.temperature]
+              .get_function_values (this->get_solution(), in_face.temperature);
+              fe_face_values[this->introspection().extractors.pressure]
+              .get_function_values (this->get_solution(), in_face.pressure);
+              fe_face_values[this->introspection().extractors.velocities]
+              .get_function_values (this->get_solution(), in_face.velocity);
+              fe_face_values[this->introspection().extractors.velocities]
+              .get_function_symmetric_gradients (this->get_solution(), in_face.strain_rate);
+              fe_face_values[this->introspection().extractors.pressure]
+              .get_function_gradients (this->get_solution(), in_face.pressure_gradient);
 
-              // for each of the quadrature points, evaluate the
-              // stress and compute the component in direction of the
-              // gravity vector
+              in_face.position = fe_face_values.get_quadrature_points();
 
-              double dynamic_topography_x_volume = 0;
-              double volume = 0;
-
-              // check which way gravity points:
-              // gravity_direction_binary is 1 if gravity is pointing in (down) and -1 if it is pointing up (out)
-              // This is needed to calculate whether g * n is ||g|| or -||g|| and has been introduced for backward advection
-              const Tensor <1,dim> g = this->get_gravity_model().gravity_vector(this->get_geometry_model().representative_point(0));
-              const Point<dim> point_surf = this->get_geometry_model().representative_point(0);
-              const Point<dim> point_bot = this->get_geometry_model().representative_point(this->get_geometry_model().maximal_depth());
-              const int gravity_direction_binary =  (g * (point_bot - point_surf) >= 0) ?
-                                                    1 :
-                                                    -1;
-
-              // Compute the integral of the dynamic topography function
-              // over the entire cell, by looping over all quadrature points
-              for (unsigned int q=0; q<quadrature_formula.size(); ++q)
+              for (unsigned int c=0; c<this->n_compositional_fields(); ++c)
+                fe_face_values[this->introspection().extractors.compositional_fields[c]]
+                .get_function_values(this->get_solution(),
+                                     face_composition_values[c]);
+              for (unsigned int i=0; i<n_q_points; ++i)
                 {
-                  Point<dim> location = fe_values.quadrature_point(q);
-                  const double viscosity = out.viscosities[q];
-                  const double density   = out.densities[q];
-
-                  const SymmetricTensor<2,dim> strain_rate = in.strain_rate[q] - 1./3 * trace(in.strain_rate[q]) * unit_symmetric_tensor<dim>();
-                  const SymmetricTensor<2,dim> shear_stress = 2 * viscosity * strain_rate;
-
-                  const Tensor<1,dim> gravity = this->get_gravity_model().gravity_vector(location);
-                  const Tensor<1,dim> gravity_direction = gravity/gravity.norm();
-
-                  // Subtract the dynamic pressure
-                  const double dynamic_pressure   = in.pressure[q] - this->get_adiabatic_conditions().pressure(location);
-                  const double sigma_rr           = gravity_direction * (shear_stress * gravity_direction) - dynamic_pressure;
-                  const double dynamic_topography = - sigma_rr / (gravity_direction_binary * gravity.norm()) / (density - density_above);
-
-                  // JxW provides the volume quadrature weights. This is a general formulation
-                  // necessary for when a quadrature formula is used that has more than one point.
-                  dynamic_topography_x_volume += dynamic_topography * fe_values.JxW(q);
-                  volume += fe_values.JxW(q);
+                  for (unsigned int c=0; c<this->n_compositional_fields(); ++c)
+                    in_face.composition[i][c] = face_composition_values[c][i];
                 }
+              in_face.cell = &cell;
 
-              const double dynamic_topography_cell_average = dynamic_topography_x_volume / volume;
-              // Compute the associated surface area to later compute the surfaces weighted integral
-              fe_face_values.reinit(cell, top_face_idx);
-              double surface = 0;
-              for (unsigned int q=0; q<fe_face_values.n_quadrature_points; ++q)
+              this->get_material_model().evaluate(in_face, out_face);
+
+              for (unsigned int q=0; q<n_q_points; ++q)
                 {
-                  surface += fe_face_values.JxW(q);
+                  const double eta = out.viscosities[q];
+                  const double density = out.densities[q];
+                  bool is_compressible = this->get_material_model().is_compressible();
+                  Tensor<1,dim> gravity = this->get_gravity_model().gravity_vector(in.position[q]);
+
+                  //Set up shape function values
+                  for (unsigned int k=0; k<dofs_per_cell; ++k)
+                    {
+                      phi_u[k] = fe_values[this->introspection().extractors.velocities].value(k,q);
+                      epsilon_phi_u[k] = fe_values[this->introspection().extractors.velocities].symmetric_gradient(k,q);
+                      div_phi_u[k] = fe_values[this->introspection().extractors.velocities].divergence (k, q);
+                    }
+
+                  for (unsigned int i = 0; i<dofs_per_cell; ++i)
+                    {
+                      //Viscous stress part
+                      local_vector(i) += 2.0 * eta * ( epsilon_phi_u[i] * in.strain_rate[q]
+                                         - (is_compressible ? 1./3. * div_phi_u[i] * div_solution[q] : 0.0) ) * fe_values.JxW(q);
+                      //Pressure and compressibility parts
+                      local_vector(i) -= div_phi_u[i] * in.pressure[q] * fe_values.JxW(q);
+                      //Force part
+                      local_vector(i) -= density * gravity * phi_u[i] * fe_values.JxW(q);
+                    }
                 }
+              for (unsigned int q=0; q < n_face_q_points; ++q)
+                for (unsigned int i=0; i<dofs_per_cell; ++i)
+                  local_mass_matrix(i) += fe_face_values[this->introspection().extractors.velocities].value(i,q) *
+                                          fe_face_values[this->introspection().extractors.velocities].value(i,q) *
+                                          fe_face_values.JxW(q);
 
-              const Point<dim> midpoint_at_surface = cell->face(top_face_idx)->center();
-
-              integrated_topography += dynamic_topography_cell_average*surface;
-              integrated_surface_area += surface;
-
-              stored_values.push_back (std::make_pair(midpoint_at_surface, dynamic_topography_cell_average));
+              cell->distribute_local_to_global( local_vector, rhs_vector );
+              cell->distribute_local_to_global( local_mass_matrix, mass_matrix );
             }
 
-      // Calculate surface weighted average dynamic topography
-      const double average_topography = Utilities::MPI::sum (integrated_topography,this->get_mpi_communicator()) / Utilities::MPI::sum (integrated_surface_area,this->get_mpi_communicator());
+      rhs_vector.compress(VectorOperation::add);
+      mass_matrix.compress(VectorOperation::add);
 
+      //Since the mass matrix is diagonal, we can just solve for the stress vector by dividing
+      const IndexSet local_elements = mass_matrix.locally_owned_elements();
+      for (unsigned int k=0; k<local_elements.n_elements(); ++k)
+        {
+          const unsigned int global_index = local_elements.nth_index_in_set(k);
+          if ( mass_matrix[global_index] > 1.e-15)
+            distributed_stress_vector[global_index] = rhs_vector[global_index]/mass_matrix[global_index];
+        }
+      distributed_stress_vector.compress(VectorOperation::insert);
+      surface_stress_vector = distributed_stress_vector;
 
-      // Write the solution to an output file
-      // if (DT_mean_switch == true) subtract the average dynamic topography,
-      // otherwise leave as is
+      //Now loop over the cells again and solve for the dynamic topography
+      const QGauss<dim-1> out_quadrature(quadrature_degree);
+      FEFaceValues<dim> fe_face_out_values (this->get_mapping(),
+                                            this->get_fe(),
+                                            out_quadrature,
+                                            update_values | update_q_points);
+
+      std::vector< Point<dim-1> > face_support_points = this->get_fe().base_element( this->introspection().base_elements.temperature ).get_unit_face_support_points();
+      Quadrature<dim-1> transfer_quadrature(face_support_points);
+      FEFaceValues<dim> fe_transfer_values (this->get_mapping(),
+                                            this->get_fe(),
+                                            transfer_quadrature,
+                                            update_values | update_q_points);
+
+      std::vector<Tensor<1,dim> > stress_values( out_quadrature.size() );
+      std::vector<Tensor<1,dim> > stress_transfer_values( transfer_quadrature.size() );
+      std::vector<double> topo_values( transfer_quadrature.size() );
+      std::vector<types::global_dof_index> face_dof_indices (dofs_per_face);
+
+      cell = this->get_dof_handler().begin_active();
+      endc = this->get_dof_handler().end();
+      for ( ; cell != endc; ++cell)
+        if (cell->is_locally_owned())
+          if (cell->at_boundary())
+            {
+              // see if the cell is at the *top* boundary, not just any boundary
+              unsigned int top_face_idx = numbers::invalid_unsigned_int;
+              {
+                for (unsigned int f=0; f<GeometryInfo<dim>::faces_per_cell; ++f)
+                  if (cell->at_boundary(f) && this->get_geometry_model().depth (cell->face(f)->center()) < cell->face(f)->minimum_vertex_distance()/3)
+                    {
+                      top_face_idx = f;
+                      break;
+                    }
+
+                if (top_face_idx == numbers::invalid_unsigned_int)
+                  continue;
+              }
+
+              fe_face_out_values.reinit (cell, top_face_idx);
+              fe_face_out_values[this->introspection().extractors.velocities].get_function_values( surface_stress_vector, stress_values );
+              const double density = 3000.;
+
+              for (unsigned int q = 0; q < out_quadrature.size(); ++q)
+                {
+                  const Tensor<1,dim> gravity = this->get_gravity_model().gravity_vector( fe_face_values.quadrature_point(q) );
+                  const double gravity_norm = gravity.norm();
+                  const Tensor<1,dim> gravity_direction = gravity/gravity.norm();
+                  const double dynamic_topography = (stress_values[q] * gravity_direction - surface_pressure)/density/gravity_norm;
+                  stored_values.push_back( std::make_pair(fe_face_values.quadrature_point(q), dynamic_topography) );
+                }
+
+              fe_transfer_values.reinit (cell, top_face_idx);
+              fe_transfer_values[this->introspection().extractors.velocities].get_function_values( surface_stress_vector, stress_transfer_values );
+              cell->face(top_face_idx)->get_dof_indices (face_dof_indices);
+
+              for (unsigned int q = 0; q < transfer_quadrature.size(); ++q)
+                {
+                  const Tensor<1,dim> gravity = this->get_gravity_model().gravity_vector( fe_transfer_values.quadrature_point(q) );
+                  const double gravity_norm = gravity.norm();
+                  const Tensor<1,dim> gravity_direction = gravity/gravity.norm();
+                  const double dynamic_topography = (stress_transfer_values[q] * gravity_direction - surface_pressure)/density/gravity_norm;
+
+                  const unsigned int local_index = this->get_fe().component_to_system_index( this->introspection().component_indices.temperature, q);
+                  distributed_topo_vector[ face_dof_indices[ local_index ] ] = dynamic_topography;
+                }
+            }
+      distributed_topo_vector.compress(VectorOperation::insert);
+      topo_vector = distributed_topo_vector;
+
       for (unsigned int i=0; i<stored_values.size(); ++i)
         {
           output << stored_values[i].first
                  << ' '
-                 << stored_values[i].second -
-                 (subtract_mean_dyn_topography
-                  ?
-                  average_topography
-                  :
-                  0.)
+                 << stored_values[i].second
                  << std::endl;
         }
 
@@ -256,20 +388,30 @@ namespace aspect
     }
 
     template <int dim>
-    void
+    const LinearAlgebra::BlockVector &
     DynamicTopography<dim>::
-    declare_parameters (ParameterHandler &prm)
+    get_topography_vector() const
+    {
+      return topo_vector;
+    }
+
+    template <int dim>
+    std::list<std::string>
+    DynamicTopography<dim>::required_other_postprocessors() const
+    {
+      std::list<std::string> deps;
+      deps.push_back("boundary pressures");
+      return deps;
+    }
+
+    template <int dim>
+    void
+    DynamicTopography<dim>::declare_parameters (ParameterHandler &prm)
     {
       prm.enter_subsection("Postprocess");
       {
         prm.enter_subsection("Dynamic Topography");
         {
-          prm.declare_entry ("Subtract mean of dynamic topography", "false",
-                             Patterns::Bool (),
-                             "Option to remove the mean dynamic topography "
-                             "in the outputted data file (not visualization). "
-                             "'true' subtracts the mean, 'false' leaves "
-                             "the calculated dynamic topography as is. ");
           prm.declare_entry ("Density above","0",
                              Patterns::Double (0),
                              "Dynamic topography is calculated as the excess or lack of mass that is supported by mantle flow. "
@@ -278,6 +420,15 @@ namespace aspect
                              "is part of the material model, this parameter `Density above' allows the user to specify the density "
                              "value of material that is displaced above the solid surface. By default this material is assumed to "
                              "be air, with a density of 0. "
+                             "Units: $kg/m^3$.");
+          prm.declare_entry ("Density below","9900.",
+                             Patterns::Double (0),
+                             "Dynamic topography is calculated as the excess or lack of mass that is supported by mantle flow. "
+                             "This value depends on the density of material that is moved up or down, i.e. crustal rock, and the "
+                             "density of the material that is displaced (for the CMB it is typically iron). While the density of crustal rock "
+                             "is part of the material model, this parameter `Density below' allows the user to specify the density "
+                             "value of material that is displaced above the solid surface. By default this material is assumed to "
+                             "be iron, with a density of 9900. "
                              "Units: $kg/m^3$.");
         }
         prm.leave_subsection();
@@ -293,14 +444,13 @@ namespace aspect
       {
         prm.enter_subsection("Dynamic Topography");
         {
-          subtract_mean_dyn_topography = prm.get_bool("Subtract mean of dynamic topography");
           density_above = prm.get_double ("Density above");
+          density_below = prm.get_double ("Density below");
         }
         prm.leave_subsection();
       }
       prm.leave_subsection();
     }
-
   }
 }
 
