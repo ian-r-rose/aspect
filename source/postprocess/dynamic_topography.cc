@@ -295,11 +295,11 @@ namespace aspect
 
               for (unsigned int q = 0; q < out_quadrature.size(); ++q)
                 {
-                  const Tensor<1,dim> gravity = this->get_gravity_model().gravity_vector( fe_face_values.quadrature_point(q) );
+                  const Tensor<1,dim> gravity = this->get_gravity_model().gravity_vector( fe_face_out_values.quadrature_point(q) );
                   const double gravity_norm = gravity.norm();
                   const Tensor<1,dim> gravity_direction = gravity/gravity.norm();
                   const double dynamic_topography = (stress_values[q] * gravity_direction - surface_pressure)/density/gravity_norm;
-                  stored_values.push_back( std::make_pair(fe_face_values.quadrature_point(q), dynamic_topography) );
+                  stored_values.push_back( std::make_pair(fe_face_out_values.quadrature_point(q), dynamic_topography) );
                 }
 
               fe_transfer_values.reinit (cell, top_face_idx);
