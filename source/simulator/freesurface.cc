@@ -830,6 +830,98 @@ namespace aspect
     for (; id != sim.parameters.free_surface_boundary_indicators.end(); ++id)
       sim.triangulation.set_boundary( *id );
   }
+
+  template <int dim>
+  void
+  Simulator<dim>::FreeSurfaceHandler::apply_surface_stress_matrix( const LinearAlgebra::BlockVector &invec,
+                                                                   LinearAlgebra::BlockVector &outvec)
+  {
+    //Matrix-free application of the surface stress matrix for use
+    //in power iteration of generalized eigenvalue problem.
+    QGauss<dim-1> quadrature(sim.parameters.stokes_velocity_degree+1);
+    UpdateFlags update_flags = UpdateFlags(update_values | update_normal_vectors |
+                                           update_quadrature_points | update_JxW_values);
+    FEFaceValues<dim> fe_face_values (sim.mapping, sim.finite_element, quadrature, update_flags);
+    const unsigned int n_face_q_points = fe_face_values.n_quadrature_points;
+
+    //Setup for vectors
+    Vector<double> local_vector(sim.finite_element.dofs_per_cell);
+
+    MaterialModel::MaterialModelInputs<dim> in(n_face_q_points,
+                                               sim.parameters.n_compositional_fields);
+    MaterialModel::MaterialModelOutputs<dim> out(n_face_q_points,
+                                                 sim.parameters.n_compositional_fields);
+    std::vector<std::vector<double> > composition_values (sim.parameters.n_compositional_fields,std::vector<double> (n_face_q_points));
+
+    typename DoFHandler<dim>::active_cell_iterator
+    cell = sim.dof_handler.begin_active(),
+    endc= sim.dof_handler.end();
+    for (; cell != endc; ++cell)
+      //only apply on free surface faces
+      if (cell->at_boundary() && cell->is_locally_owned())
+        for (unsigned int face_no=0; face_no<GeometryInfo<dim>::faces_per_cell; ++face_no)
+          if (cell->face(face_no)->at_boundary())
+            {
+              const types::boundary_id boundary_indicator
+#if DEAL_II_VERSION_GTE(8,3,0)
+                = cell->face(face_no)->boundary_id();
+#else
+                = cell->face(face_no)->boundary_indicator();
+#endif
+              if (sim.parameters.free_surface_boundary_indicators.find(boundary_indicator)
+                  == sim.parameters.free_surface_boundary_indicators.end())
+                continue;
+
+              local_vector = 0.;
+              fe_face_values.reinit(cell, face_no);
+              std::vector<Point<dim> > quad_points = fe_face_values.get_quadrature_points();
+
+              //Evaluate the density at the surface quadrature points
+              fe_face_values[sim.introspection.extractors.temperature]
+              .get_function_values (invec, in.temperature);
+              fe_face_values[sim.introspection.extractors.pressure]
+              .get_function_values (invec, in.pressure);
+              fe_face_values[sim.introspection.extractors.velocities]
+              .get_function_values (invec, in.velocity);
+
+              in.position = quad_points;
+              in.strain_rate.resize(0);  //no need for viscosity
+
+              for (unsigned int c=0; c<sim.parameters.n_compositional_fields; ++c)
+                fe_face_values[sim.introspection.extractors.compositional_fields[c]]
+                .get_function_values(invec,
+                                     composition_values[c]);
+              for (unsigned int i=0; i<fe_face_values.n_quadrature_points; ++i)
+                {
+                  for (unsigned int c=0; c<sim.parameters.n_compositional_fields; ++c)
+                    in.composition[i][c] = composition_values[c][i];
+                }
+
+              sim.material_model->evaluate(in, out);
+
+              for (unsigned int q_point = 0; q_point < n_face_q_points; ++q_point)
+                for (unsigned int i=0; i< fe_face_values.dofs_per_cell; ++i)
+                  {
+                    //see Kaus et al 2010 for details
+
+                    const Tensor<1,dim> gravity = sim.gravity_model->gravity_vector(quad_points[q_point]);
+                    double g_norm = gravity.norm();
+
+                    //construct the relevant vectors
+                    const Tensor<1,dim> v =     in.velocity[q_point];
+                    const Tensor<1,dim> n_hat = fe_face_values.normal_vector(q_point);
+                    const Tensor<1,dim> w =     fe_face_values[sim.introspection.extractors.velocities].value(i, q_point);
+
+                    const double stress_value = out.densities[q_point]*g_norm*
+                                                (w*n_hat) * (v*n_hat)
+                                                *fe_face_values.JxW(q_point);
+
+                    local_vector(i) += stress_value;
+                  }
+              cell->distribute_local_to_global( local_vector, outvec );
+            }
+    outvec.compress(VectorOperation::add);
+  }
 }
 
 

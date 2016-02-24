@@ -65,6 +65,7 @@ namespace aspect
       enum Kind
       {
         IMPES,
+        Power_iteration,
         iterated_IMPES,
         iterated_Stokes,
         Stokes_only,

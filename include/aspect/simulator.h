@@ -1311,6 +1311,9 @@ namespace aspect
            */
           void detach_manifolds();
 
+          void apply_surface_stress_matrix( const LinearAlgebra::BlockVector &invec,
+                                            LinearAlgebra::BlockVector &outvec);
+
           /**
            * Declare parameters for the free surface handling.
            */

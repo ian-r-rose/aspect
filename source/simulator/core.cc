@@ -456,7 +456,8 @@ namespace aspect
         //It should be possible to make the free surface work with any of a number of nonlinear
         //schemes, but I do not see a way to do it in generality --IR
         AssertThrow( parameters.nonlinear_solver == NonlinearSolver::IMPES ||
-                     parameters.nonlinear_solver == NonlinearSolver::iterated_Stokes,
+                     parameters.nonlinear_solver == NonlinearSolver::iterated_Stokes ||
+                     parameters.nonlinear_solver == NonlinearSolver::Power_iteration,
                      ExcMessage("The free surface scheme is only implemented for the IMPES or Iterated Stokes solver") );
         //Pressure normalization doesn't really make sense with a free surface, and if we do
         //use it, we can run into problems with geometry_model->depth().
@@ -1987,6 +1988,41 @@ namespace aspect
               current_linearization_point.block(introspection.block_indices.compositional_fields[c])
                 = solution.block(introspection.block_indices.compositional_fields[c]);
             }
+
+          break;
+        }
+
+        case NonlinearSolver::Power_iteration:
+        {
+          if (stokes_matrix_depends_on_solution() == true)
+            rebuild_stokes_matrix = rebuild_stokes_preconditioner = true;
+
+          //Assemble system
+          assemble_stokes_system();
+          build_stokes_preconditioner();
+
+          LinearAlgebra::BlockVector dist_solution(system_rhs);
+          dist_solution = solution;
+          const double initial_norm = (timestep_number == 0 ? system_rhs.l2_norm() : dist_solution.l2_norm());
+          double scale_factor = 1.0;
+
+          //Set rhs
+          LinearAlgebra::BlockVector tmp(introspection.index_sets.system_partitioning, mpi_communicator);
+          if ( timestep_number != 0 )
+            {
+              free_surface->apply_surface_stress_matrix( solution, tmp );
+              scale_factor = system_rhs.l2_norm()/tmp.l2_norm();
+              tmp *= scale_factor;
+              system_rhs = tmp;
+            }
+
+          solve_stokes();
+
+          dist_solution = solution;
+          const double lambda = dist_solution.l2_norm()/initial_norm/scale_factor;
+          const double timescale = 1./lambda / (parameters.convert_to_years ? year_in_seconds : 1.0 );
+          pcout<<"    Power iteration timescale : "<< timescale <<std::endl;
+
 
           break;
         }
