@@ -641,6 +641,9 @@ namespace aspect
     mesh_velocity.reinit(sim.introspection.index_sets.system_partitioning,
                          sim.introspection.index_sets.system_relevant_partitioning,
                          sim.mpi_communicator);
+    eigenvector.reinit(sim.introspection.index_sets.system_partitioning,
+                         sim.introspection.index_sets.system_relevant_partitioning,
+                         sim.mpi_communicator);
 
 
     free_surface_dof_handler.distribute_dofs(free_surface_fe);
@@ -853,6 +856,8 @@ namespace aspect
                                                  sim.parameters.n_compositional_fields);
     std::vector<std::vector<double> > composition_values (sim.parameters.n_compositional_fields,std::vector<double> (n_face_q_points));
 
+    outvec = 0.;
+
     typename DoFHandler<dim>::active_cell_iterator
     cell = sim.dof_handler.begin_active(),
     endc= sim.dof_handler.end();
@@ -921,6 +926,59 @@ namespace aspect
               cell->distribute_local_to_global( local_vector, outvec );
             }
     outvec.compress(VectorOperation::add);
+  }
+
+  template <int dim>
+  void
+  Simulator<dim>::FreeSurfaceHandler::compute_relaxation_timescale()
+  {
+    sim.pcout<<"Entering power iteration"<<std::endl;
+
+    //store the solution vector
+    LinearAlgebra::BlockVector store_solution(sim.solution);
+
+    if (sim.stokes_matrix_depends_on_solution() == true)
+      sim.rebuild_stokes_matrix = sim.rebuild_stokes_preconditioner = true;
+
+    //Assemble system
+    sim.assemble_stokes_system();
+    sim.build_stokes_preconditioner();
+
+    double target_norm = sim.system_rhs.l2_norm();
+    double timescale = 0., prev_timescale = 0.;
+    LinearAlgebra::BlockVector dist_solution(sim.introspection.index_sets.system_partitioning, sim.mpi_communicator);
+    LinearAlgebra::BlockVector guess(sim.introspection.index_sets.system_partitioning, sim.mpi_communicator);
+    if (sim.timestep_number == 0) eigenvector = sim.system_rhs;
+
+    unsigned int iter = 0;
+    const unsigned int max_iter = 10;
+    guess = eigenvector;
+    dist_solution = sim.solution;
+    do
+    {
+      prev_timescale = timescale;
+      const double initial_norm = (iter == 0 ? guess.l2_norm() : dist_solution.l2_norm());
+
+      if (iter == 0)
+        apply_surface_stress_matrix( eigenvector, guess );
+      else
+        apply_surface_stress_matrix( sim.solution, guess );
+      const double scale_factor = target_norm/guess.l2_norm();
+      guess *= scale_factor;
+      sim.system_rhs = guess;
+
+      sim.solve_stokes();
+
+      dist_solution = sim.solution;
+      const double lambda = dist_solution.l2_norm()/initial_norm/scale_factor;
+      timescale = 1./lambda / (sim.parameters.convert_to_years ? year_in_seconds : 1.0 );
+      sim.pcout<<"    Power iteration timescale : "<< timescale <<std::endl;
+      iter++;
+    }while( std::abs((timescale-prev_timescale)/timescale) > 0.05 && iter < max_iter);
+
+    eigenvector = sim.solution;
+    relaxation_time = timescale * (sim.parameters.convert_to_years ? year_in_seconds : 1.0 );
+    sim.solution = store_solution;
   }
 }
 

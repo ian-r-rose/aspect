@@ -1464,7 +1464,10 @@ namespace aspect
     x_system[1] = &old_solution;
 
     if (parameters.free_surface_enabled)
+    {
       x_system.push_back( &free_surface->mesh_velocity );
+      x_system.push_back( &free_surface->eigenvector );
+    }
 
     parallel::distributed::SolutionTransfer<dim,LinearAlgebra::BlockVector>
     system_trans(dof_handler);
@@ -1499,18 +1502,25 @@ namespace aspect
       LinearAlgebra::BlockVector distributed_system;
       LinearAlgebra::BlockVector old_distributed_system;
       LinearAlgebra::BlockVector distributed_mesh_velocity;
+      LinearAlgebra::BlockVector distributed_eigenvector;
 
       distributed_system.reinit(introspection.index_sets.system_partitioning, mpi_communicator);
       old_distributed_system.reinit(introspection.index_sets.system_partitioning, mpi_communicator);
       if (parameters.free_surface_enabled)
+      {
         distributed_mesh_velocity.reinit(introspection.index_sets.system_partitioning, mpi_communicator);
+        distributed_eigenvector.reinit(introspection.index_sets.system_partitioning, mpi_communicator);
+      }
 
       std::vector<LinearAlgebra::BlockVector *> system_tmp (2);
       system_tmp[0] = &distributed_system;
       system_tmp[1] = &old_distributed_system;
 
       if (parameters.free_surface_enabled)
+      {
         system_tmp.push_back(&distributed_mesh_velocity);
+        system_tmp.push_back(&distributed_eigenvector);
+      }
 
       // transfer the data previously stored into the vectors indexed by
       // system_tmp. then ensure that the interpolated solution satisfies
@@ -1538,6 +1548,8 @@ namespace aspect
         {
           constraints.distribute (distributed_mesh_velocity);
           free_surface->mesh_velocity = distributed_mesh_velocity;
+          constraints.distribute (distributed_eigenvector);
+          free_surface->eigenvector = distributed_eigenvector;
         }
 
       // do the same as above also for the free surface solution
@@ -1994,35 +2006,48 @@ namespace aspect
 
         case NonlinearSolver::Power_iteration:
         {
+          //We do the free surface execution at the beginning of the timestep for a specific reason.
+          //The time step size is calculated AFTER the whole solve_timestep() function.  If we call
+          //free_surface_execute() after the Stokes solve, it will be before we know what the appropriate
+          //time step to take is, and we will timestep the boundary incorrectly.
+          if (parameters.free_surface_enabled)
+          {
+            if( timestep_number % 10 == 0 )
+              free_surface->compute_relaxation_timescale();
+            free_surface->execute ();
+          }
+
+          assemble_advection_system (AdvectionField::temperature());
+          build_advection_preconditioner(AdvectionField::temperature(),
+                                         T_preconditioner);
+          solve_advection(AdvectionField::temperature());
+
+          current_linearization_point.block(introspection.block_indices.temperature)
+            = solution.block(introspection.block_indices.temperature);
+
+          for (unsigned int c=0; c<parameters.n_compositional_fields; ++c)
+            {
+              assemble_advection_system (AdvectionField::composition(c));
+              build_advection_preconditioner(AdvectionField::composition(c),
+                                             C_preconditioner);
+              solve_advection(AdvectionField::composition(c));
+            }
+
+          for (unsigned int c=0; c<parameters.n_compositional_fields; ++c)
+            current_linearization_point.block(introspection.block_indices.compositional_fields[c])
+              = solution.block(introspection.block_indices.compositional_fields[c]);
+
+          // the Stokes matrix depends on the viscosity. if the viscosity
+          // depends on other solution variables, then after we need to
+          // update the Stokes matrix in every time step and so need to set
+          // the following flag. if we change the Stokes matrix we also
+          // need to update the Stokes preconditioner.
           if (stokes_matrix_depends_on_solution() == true)
             rebuild_stokes_matrix = rebuild_stokes_preconditioner = true;
 
-          //Assemble system
           assemble_stokes_system();
           build_stokes_preconditioner();
-
-          LinearAlgebra::BlockVector dist_solution(system_rhs);
-          dist_solution = solution;
-          const double initial_norm = (timestep_number == 0 ? system_rhs.l2_norm() : dist_solution.l2_norm());
-          double scale_factor = 1.0;
-
-          //Set rhs
-          LinearAlgebra::BlockVector tmp(introspection.index_sets.system_partitioning, mpi_communicator);
-          if ( timestep_number != 0 )
-            {
-              free_surface->apply_surface_stress_matrix( solution, tmp );
-              scale_factor = system_rhs.l2_norm()/tmp.l2_norm();
-              tmp *= scale_factor;
-              system_rhs = tmp;
-            }
-
           solve_stokes();
-
-          dist_solution = solution;
-          const double lambda = dist_solution.l2_norm()/initial_norm/scale_factor;
-          const double timescale = 1./lambda / (parameters.convert_to_years ? year_in_seconds : 1.0 );
-          pcout<<"    Power iteration timescale : "<< timescale <<std::endl;
-
 
           break;
         }

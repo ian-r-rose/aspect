@@ -1311,8 +1311,8 @@ namespace aspect
            */
           void detach_manifolds();
 
-          void apply_surface_stress_matrix( const LinearAlgebra::BlockVector &invec,
-                                            LinearAlgebra::BlockVector &outvec);
+          void compute_relaxation_timescale();
+
 
           /**
            * Declare parameters for the free surface handling.
@@ -1360,6 +1360,9 @@ namespace aspect
            */
           void calculate_mesh_displacement ();
 
+          void apply_surface_stress_matrix( const LinearAlgebra::BlockVector &invec,
+                                            LinearAlgebra::BlockVector &outvec);
+
           /**
            * Reference to the Simulator object to which a FreeSurfaceHandler
            * instance belongs
@@ -1394,6 +1397,12 @@ namespace aspect
            * corrections.
            */
           LinearAlgebra::BlockVector mesh_velocity;
+
+          /**
+           * BlockVector which stores the principal eigenvector of the 
+           * free surface system, if that is calculated.
+           */
+          LinearAlgebra::BlockVector eigenvector;
 
           /**
            * Vector for storing the positions of the mesh vertices.  This
