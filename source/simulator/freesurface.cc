@@ -992,7 +992,10 @@ namespace aspect
 
     eigenvector = sim.solution;
     if ( guess_relaxation_time )
+    {
       relaxation_time = timescale * (sim.parameters.convert_to_years ? year_in_seconds : 1.0 );
+      sim.pcout<<"    New relaxation timescale : "<< timescale <<std::endl;
+    }
     sim.solution = store_solution;
   }
 }
