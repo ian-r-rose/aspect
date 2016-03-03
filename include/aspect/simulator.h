@@ -1392,6 +1392,17 @@ namespace aspect
           double relaxation_time;
 
           /**
+           * Whether to use the nonstandard finite difference scheme.
+           */
+          bool use_nsfd;
+
+          /**
+           * Whether to guess the relaxation time for nonstandard finite
+           * differences, or to use the value supplied in the parameter file.
+           */
+          bool guess_relaxation_time;
+
+          /**
            * BlockVector which stores the mesh velocity interpolated onto the
            * Stokes velocity finite element space.  This is used for ALE
            * corrections.
@@ -1399,7 +1410,7 @@ namespace aspect
           LinearAlgebra::BlockVector mesh_velocity;
 
           /**
-           * BlockVector which stores the principal eigenvector of the 
+           * BlockVector which stores the principal eigenvector of the
            * free surface system, if that is calculated.
            */
           LinearAlgebra::BlockVector eigenvector;

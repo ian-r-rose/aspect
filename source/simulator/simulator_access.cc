@@ -267,7 +267,8 @@ namespace aspect
   {
     Assert( simulator->parameters.free_surface_enabled,
             ExcMessage("You cannot get the mesh velocity with no free surface."));
-    return simulator->free_surface->mesh_velocity;
+    //return simulator->free_surface->mesh_velocity;
+    return simulator->free_surface->eigenvector;
   }
 
 

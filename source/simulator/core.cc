@@ -456,8 +456,7 @@ namespace aspect
         //It should be possible to make the free surface work with any of a number of nonlinear
         //schemes, but I do not see a way to do it in generality --IR
         AssertThrow( parameters.nonlinear_solver == NonlinearSolver::IMPES ||
-                     parameters.nonlinear_solver == NonlinearSolver::iterated_Stokes ||
-                     parameters.nonlinear_solver == NonlinearSolver::Power_iteration,
+                     parameters.nonlinear_solver == NonlinearSolver::iterated_Stokes,
                      ExcMessage("The free surface scheme is only implemented for the IMPES or Iterated Stokes solver") );
         //Pressure normalization doesn't really make sense with a free surface, and if we do
         //use it, we can run into problems with geometry_model->depth().
@@ -1464,10 +1463,10 @@ namespace aspect
     x_system[1] = &old_solution;
 
     if (parameters.free_surface_enabled)
-    {
-      x_system.push_back( &free_surface->mesh_velocity );
-      x_system.push_back( &free_surface->eigenvector );
-    }
+      {
+        x_system.push_back( &free_surface->mesh_velocity );
+        x_system.push_back( &free_surface->eigenvector );
+      }
 
     parallel::distributed::SolutionTransfer<dim,LinearAlgebra::BlockVector>
     system_trans(dof_handler);
@@ -1507,20 +1506,20 @@ namespace aspect
       distributed_system.reinit(introspection.index_sets.system_partitioning, mpi_communicator);
       old_distributed_system.reinit(introspection.index_sets.system_partitioning, mpi_communicator);
       if (parameters.free_surface_enabled)
-      {
-        distributed_mesh_velocity.reinit(introspection.index_sets.system_partitioning, mpi_communicator);
-        distributed_eigenvector.reinit(introspection.index_sets.system_partitioning, mpi_communicator);
-      }
+        {
+          distributed_mesh_velocity.reinit(introspection.index_sets.system_partitioning, mpi_communicator);
+          distributed_eigenvector.reinit(introspection.index_sets.system_partitioning, mpi_communicator);
+        }
 
       std::vector<LinearAlgebra::BlockVector *> system_tmp (2);
       system_tmp[0] = &distributed_system;
       system_tmp[1] = &old_distributed_system;
 
       if (parameters.free_surface_enabled)
-      {
-        system_tmp.push_back(&distributed_mesh_velocity);
-        system_tmp.push_back(&distributed_eigenvector);
-      }
+        {
+          system_tmp.push_back(&distributed_mesh_velocity);
+          system_tmp.push_back(&distributed_eigenvector);
+        }
 
       // transfer the data previously stored into the vectors indexed by
       // system_tmp. then ensure that the interpolated solution satisfies
@@ -1703,7 +1702,11 @@ namespace aspect
           //free_surface_execute() after the Stokes solve, it will be before we know what the appropriate
           //time step to take is, and we will timestep the boundary incorrectly.
           if (parameters.free_surface_enabled)
-            free_surface->execute ();
+            {
+              if ( timestep_number%50 == 0 &&  free_surface->guess_relaxation_time)
+                free_surface->compute_relaxation_timescale();
+              free_surface->execute ();
+            }
 
           assemble_advection_system (AdvectionField::temperature());
           build_advection_preconditioner(AdvectionField::temperature(),
@@ -2000,54 +2003,6 @@ namespace aspect
               current_linearization_point.block(introspection.block_indices.compositional_fields[c])
                 = solution.block(introspection.block_indices.compositional_fields[c]);
             }
-
-          break;
-        }
-
-        case NonlinearSolver::Power_iteration:
-        {
-          //We do the free surface execution at the beginning of the timestep for a specific reason.
-          //The time step size is calculated AFTER the whole solve_timestep() function.  If we call
-          //free_surface_execute() after the Stokes solve, it will be before we know what the appropriate
-          //time step to take is, and we will timestep the boundary incorrectly.
-          if (parameters.free_surface_enabled)
-          {
-            if( timestep_number % 10 == 0 )
-              free_surface->compute_relaxation_timescale();
-            free_surface->execute ();
-          }
-
-          assemble_advection_system (AdvectionField::temperature());
-          build_advection_preconditioner(AdvectionField::temperature(),
-                                         T_preconditioner);
-          solve_advection(AdvectionField::temperature());
-
-          current_linearization_point.block(introspection.block_indices.temperature)
-            = solution.block(introspection.block_indices.temperature);
-
-          for (unsigned int c=0; c<parameters.n_compositional_fields; ++c)
-            {
-              assemble_advection_system (AdvectionField::composition(c));
-              build_advection_preconditioner(AdvectionField::composition(c),
-                                             C_preconditioner);
-              solve_advection(AdvectionField::composition(c));
-            }
-
-          for (unsigned int c=0; c<parameters.n_compositional_fields; ++c)
-            current_linearization_point.block(introspection.block_indices.compositional_fields[c])
-              = solution.block(introspection.block_indices.compositional_fields[c]);
-
-          // the Stokes matrix depends on the viscosity. if the viscosity
-          // depends on other solution variables, then after we need to
-          // update the Stokes matrix in every time step and so need to set
-          // the following flag. if we change the Stokes matrix we also
-          // need to update the Stokes preconditioner.
-          if (stokes_matrix_depends_on_solution() == true)
-            rebuild_stokes_matrix = rebuild_stokes_preconditioner = true;
-
-          assemble_stokes_system();
-          build_stokes_preconditioner();
-          solve_stokes();
 
           break;
         }

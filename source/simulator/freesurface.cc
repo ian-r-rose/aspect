@@ -116,6 +116,13 @@ namespace aspect
                          "may have provided for each part of the boundary. You may want "
                          "to compare this with the documentation of the geometry model you "
                          "use in your model.");
+      prm.declare_entry("Use nonstandard finite difference scheme", "false",
+                        Patterns::Bool(),
+                        "Whether to advect the free surface using nonstandard finite "
+                        "differences. This is an alternative stabilization scheme to "
+                        "that of Kaus et. al. (2000), and should not be combined with "
+                        "that scheme. It requires an estimate of fastest relaxation time "
+                        "of the free surface system.");
       prm.declare_entry("Relaxation time", "0.0",
                         Patterns::Double(0.),
                         "Relaxation timescale for the nonstandard finite difference "
@@ -123,7 +130,8 @@ namespace aspect
                         "as possible to the fastest relaxation time of the system."
                         "In general, this will correspond to the longest wavelength "
                         "deformation mode of the system.  If it is set to zero, then "
-                        "a standard forward Euler timestep is used instead. "
+                        "we attempt to estimate the fastest relaxation time using "
+                        "power iteration for the generalized eigenvalue problem."
                         "Both this scheme and the quasi-implicit theta scheme are meant "
                         "to stabilize the free surface, so it doesn't necessarily "
                         "make sense to use both at the same time. ");
@@ -167,11 +175,16 @@ namespace aspect
                                           "the conversion function complained as follows: "
                                           + error));
         }
+      use_nsfd = prm.get_bool("Use nonstandard finite difference scheme");
       relaxation_time = prm.get_double("Relaxation time");
       if (sim.parameters.convert_to_years)
         relaxation_time *= year_in_seconds;
       AssertThrow(relaxation_time >= 0.0,
                   ExcMessage("Relaxation time must be greater than zero") );
+      guess_relaxation_time = (relaxation_time == 0.0);
+
+      if (use_nsfd && (free_surface_theta != 0.0) )
+        sim.pcout<<"Warning: using more than one stabilization scheme for the free surface at the same time."<<std::endl;
     }
     prm.leave_subsection ();
   }
@@ -579,7 +592,7 @@ namespace aspect
     distributed_mesh_vertex_velocity = mesh_vertex_velocity;
 
     //actually do the ALE thing
-    const double pseudo_timestep =  (relaxation_time == 0.0 ? sim.time_step : -boost::math::expm1( -sim.time_step/relaxation_time )*relaxation_time);
+    const double pseudo_timestep =  ( !use_nsfd ? sim.time_step : -boost::math::expm1( -sim.time_step/relaxation_time )*relaxation_time);
     distributed_mesh_vertices.sadd(1.0, pseudo_timestep, distributed_mesh_vertex_velocity);
     mesh_vertices = distributed_mesh_vertices;
 
@@ -642,8 +655,8 @@ namespace aspect
                          sim.introspection.index_sets.system_relevant_partitioning,
                          sim.mpi_communicator);
     eigenvector.reinit(sim.introspection.index_sets.system_partitioning,
-                         sim.introspection.index_sets.system_relevant_partitioning,
-                         sim.mpi_communicator);
+                       sim.introspection.index_sets.system_relevant_partitioning,
+                       sim.mpi_communicator);
 
 
     free_surface_dof_handler.distribute_dofs(free_surface_fe);
@@ -955,29 +968,31 @@ namespace aspect
     guess = eigenvector;
     dist_solution = sim.solution;
     do
-    {
-      prev_timescale = timescale;
-      const double initial_norm = (iter == 0 ? guess.l2_norm() : dist_solution.l2_norm());
+      {
+        prev_timescale = timescale;
+        const double initial_norm = (iter == 0 ? guess.l2_norm() : dist_solution.l2_norm());
 
-      if (iter == 0)
-        apply_surface_stress_matrix( eigenvector, guess );
-      else
-        apply_surface_stress_matrix( sim.solution, guess );
-      const double scale_factor = target_norm/guess.l2_norm();
-      guess *= scale_factor;
-      sim.system_rhs = guess;
+        if (iter == 0)
+          apply_surface_stress_matrix( eigenvector, guess );
+        else
+          apply_surface_stress_matrix( sim.solution, guess );
+        const double scale_factor = target_norm/guess.l2_norm();
+        guess *= scale_factor;
+        sim.system_rhs = guess;
 
-      sim.solve_stokes();
+        sim.solve_stokes();
 
-      dist_solution = sim.solution;
-      const double lambda = dist_solution.l2_norm()/initial_norm/scale_factor;
-      timescale = 1./lambda / (sim.parameters.convert_to_years ? year_in_seconds : 1.0 );
-      sim.pcout<<"    Power iteration timescale : "<< timescale <<std::endl;
-      iter++;
-    }while( std::abs((timescale-prev_timescale)/timescale) > 0.05 && iter < max_iter);
+        dist_solution = sim.solution;
+        const double lambda = dist_solution.l2_norm()/initial_norm/scale_factor;
+        timescale = 1./lambda / (sim.parameters.convert_to_years ? year_in_seconds : 1.0 );
+        sim.pcout<<"    Power iteration timescale : "<< timescale <<std::endl;
+        iter++;
+      }
+    while ( std::abs((timescale-prev_timescale)/timescale) > 0.05 && iter < max_iter);
 
     eigenvector = sim.solution;
-    relaxation_time = timescale * (sim.parameters.convert_to_years ? year_in_seconds : 1.0 );
+    if ( guess_relaxation_time )
+      relaxation_time = timescale * (sim.parameters.convert_to_years ? year_in_seconds : 1.0 );
     sim.solution = store_solution;
   }
 }

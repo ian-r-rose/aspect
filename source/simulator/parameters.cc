@@ -150,7 +150,7 @@ namespace aspect
                        "heat conduction in determining the length of each time step.");
 
     prm.declare_entry ("Nonlinear solver scheme", "IMPES",
-                       Patterns::Selection ("IMPES|iterated IMPES|iterated Stokes|Stokes only|Advection only|Power iteration"),
+                       Patterns::Selection ("IMPES|iterated IMPES|iterated Stokes|Stokes only|Advection only"),
                        "The kind of scheme used to resolve the nonlinearity in the system. "
                        "'IMPES' is the classical IMplicit Pressure Explicit Saturation scheme "
                        "in which ones solves the temperatures and Stokes equations exactly "
@@ -753,8 +753,6 @@ namespace aspect
       nonlinear_solver = NonlinearSolver::Stokes_only;
     else if (prm.get ("Nonlinear solver scheme") == "Advection only")
       nonlinear_solver = NonlinearSolver::Advection_only;
-    else if (prm.get ("Nonlinear solver scheme") == "Power iteration")
-      nonlinear_solver = NonlinearSolver::Power_iteration;
     else
       AssertThrow (false, ExcNotImplemented());
 
