@@ -1703,7 +1703,7 @@ namespace aspect
           //time step to take is, and we will timestep the boundary incorrectly.
           if (parameters.free_surface_enabled)
             {
-              if ( timestep_number%50 == 0 &&  free_surface->guess_relaxation_time)
+              if ( (timestep_number%50 == 0 || timestep_number==1) &&  free_surface->guess_relaxation_time)
                 free_surface->compute_relaxation_timescale();
               free_surface->execute ();
             }

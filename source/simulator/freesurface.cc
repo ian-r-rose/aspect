@@ -949,9 +949,7 @@ namespace aspect
 
     //store the solution vector
     LinearAlgebra::BlockVector store_solution(sim.solution);
-
-    if (sim.stokes_matrix_depends_on_solution() == true)
-      sim.rebuild_stokes_matrix = sim.rebuild_stokes_preconditioner = true;
+    sim.rebuild_stokes_matrix = sim.rebuild_stokes_preconditioner = true;
 
     //Assemble system
     sim.assemble_stokes_system();
@@ -997,6 +995,7 @@ namespace aspect
       sim.pcout<<"    New relaxation timescale : "<< timescale <<std::endl;
     }
     sim.solution = store_solution;
+    sim.rebuild_stokes_matrix = sim.rebuild_stokes_preconditioner = true;
   }
 }
 
