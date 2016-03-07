@@ -181,7 +181,7 @@ namespace aspect
         relaxation_time *= year_in_seconds;
       AssertThrow(relaxation_time >= 0.0,
                   ExcMessage("Relaxation time must be greater than zero") );
-      guess_relaxation_time = (relaxation_time == 0.0);
+      guess_relaxation_time = (relaxation_time == 0.0 && use_nsfd);
 
       if (use_nsfd && (free_surface_theta != 0.0) )
         sim.pcout<<"Warning: using more than one stabilization scheme for the free surface at the same time."<<std::endl;
