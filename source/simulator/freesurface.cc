@@ -859,6 +859,7 @@ namespace aspect
                                            update_quadrature_points | update_JxW_values);
     FEFaceValues<dim> fe_face_values (sim.mapping, sim.finite_element, quadrature, update_flags);
     const unsigned int n_face_q_points = fe_face_values.n_quadrature_points;
+    std::vector<types::global_dof_index> local_dof_indices(sim.finite_element.dofs_per_cell);
 
     //Setup for vectors
     Vector<double> local_vector(sim.finite_element.dofs_per_cell);
@@ -870,6 +871,7 @@ namespace aspect
     std::vector<std::vector<double> > composition_values (sim.parameters.n_compositional_fields,std::vector<double> (n_face_q_points));
 
     outvec = 0.;
+    outvec.compress(VectorOperation::insert);
 
     typename DoFHandler<dim>::active_cell_iterator
     cell = sim.dof_handler.begin_active(),
@@ -889,6 +891,8 @@ namespace aspect
               if (sim.parameters.free_surface_boundary_indicators.find(boundary_indicator)
                   == sim.parameters.free_surface_boundary_indicators.end())
                 continue;
+
+              cell->get_dof_indices(local_dof_indices);
 
               local_vector = 0.;
               fe_face_values.reinit(cell, face_no);
@@ -920,8 +924,6 @@ namespace aspect
               for (unsigned int q_point = 0; q_point < n_face_q_points; ++q_point)
                 for (unsigned int i=0; i< fe_face_values.dofs_per_cell; ++i)
                   {
-                    //see Kaus et al 2010 for details
-
                     const Tensor<1,dim> gravity = sim.gravity_model->gravity_vector(quad_points[q_point]);
                     double g_norm = gravity.norm();
 
@@ -933,10 +935,9 @@ namespace aspect
                     const double stress_value = out.densities[q_point]*g_norm*
                                                 (w*n_hat) * (v*n_hat)
                                                 *fe_face_values.JxW(q_point);
-
                     local_vector(i) += stress_value;
                   }
-              cell->distribute_local_to_global( local_vector, outvec );
+              sim.current_constraints.distribute_local_to_global( local_vector, local_dof_indices, outvec );
             }
     outvec.compress(VectorOperation::add);
   }
