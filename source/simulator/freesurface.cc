@@ -960,10 +960,10 @@ namespace aspect
     double timescale = 0., prev_timescale = 0.;
     LinearAlgebra::BlockVector dist_solution(sim.introspection.index_sets.system_partitioning, sim.mpi_communicator);
     LinearAlgebra::BlockVector guess(sim.introspection.index_sets.system_partitioning, sim.mpi_communicator);
-    if (sim.timestep_number == 0) eigenvector = sim.system_rhs;
+    if (sim.timestep_number == 0 && sim.pre_refinement_step == 0) eigenvector = sim.system_rhs;
 
     unsigned int iter = 0;
-    const unsigned int max_iter = 10;
+    const unsigned int max_iter = 30;
     guess = eigenvector;
     dist_solution = sim.solution;
     do
@@ -987,7 +987,7 @@ namespace aspect
         sim.pcout<<"    Power iteration timescale : "<< timescale <<std::endl;
         iter++;
       }
-    while ( std::abs((timescale-prev_timescale)/timescale) > 0.05 && iter < max_iter);
+    while ( std::abs((timescale-prev_timescale)/timescale) > 0.001 && iter < max_iter);
 
     eigenvector = sim.solution;
     if ( guess_relaxation_time )
