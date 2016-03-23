@@ -1363,6 +1363,8 @@ namespace aspect
           void apply_surface_stress_matrix( const LinearAlgebra::BlockVector &invec,
                                             LinearAlgebra::BlockVector &outvec);
 
+          double compute_velocity_correction ();
+
           /**
            * Reference to the Simulator object to which a FreeSurfaceHandler
            * instance belongs
@@ -1401,6 +1403,13 @@ namespace aspect
            * differences, or to use the value supplied in the parameter file.
            */
           bool guess_relaxation_time;
+
+          /**
+           * Initial volume of the domain. Over long time integrations, small
+           * errors in the advection of the surface can cause drift in the overall
+           * domain volume. We can apply a correction to keep the volume steady.
+           */
+          double initial_domain_volume;
 
           /**
            * BlockVector which stores the mesh velocity interpolated onto the

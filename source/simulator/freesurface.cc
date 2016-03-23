@@ -28,6 +28,8 @@
 #include <deal.II/dofs/dof_accessor.h>
 #include <deal.II/dofs/dof_tools.h>
 
+#include <deal.II/grid/grid_tools.h>
+
 #include <deal.II/fe/fe_values.h>
 
 #include <deal.II/lac/sparsity_tools.h>
@@ -332,6 +334,7 @@ namespace aspect
   void Simulator<dim>::FreeSurfaceHandler::project_velocity_onto_boundary(LinearAlgebra::Vector &output)
   {
     // TODO: should we use the extrapolated solution?
+    const double velocity_correction = compute_velocity_correction();
 
     //stuff for iterating over the mesh
     QGauss<dim-1> face_quadrature(free_surface_fe.degree+1);
@@ -443,7 +446,7 @@ namespace aspect
                         }
 
                       cell_vector(i) += (fs_fe_face_values[extract_vel].value(i,point) * direction)
-                                        * (velocity_values[point] * direction)
+                                        * (velocity_values[point] * direction + velocity_correction)
                                         * fs_fe_face_values.JxW(point);
                     }
                 }
@@ -711,6 +714,9 @@ namespace aspect
 
         distributed_mesh_vertices.compress(VectorOperation::insert);
         mesh_vertices = distributed_mesh_vertices;
+
+        //Also compute the initial volume of the domain
+        initial_domain_volume = GridTools::volume(sim.triangulation, sim.mapping);
       }
 
     make_constraints();
@@ -991,12 +997,61 @@ namespace aspect
 
     eigenvector = sim.solution;
     if ( guess_relaxation_time )
-    {
-      relaxation_time = timescale * (sim.parameters.convert_to_years ? year_in_seconds : 1.0 );
-      sim.pcout<<"    New relaxation timescale : "<< timescale <<std::endl;
-    }
+      {
+        relaxation_time = timescale * (sim.parameters.convert_to_years ? year_in_seconds : 1.0 );
+        sim.pcout<<"    New relaxation timescale : "<< timescale <<std::endl;
+      }
     sim.solution = store_solution;
     sim.rebuild_stokes_matrix = sim.rebuild_stokes_preconditioner = true;
+  }
+
+  template <int dim>
+  double
+  Simulator<dim>::FreeSurfaceHandler::compute_velocity_correction()
+  {
+    const double current_volume = GridTools::volume( sim.triangulation, sim.mapping);
+    double local_free_surface_area = 0.;
+    double global_free_surface_area =0.;
+
+    QGauss<dim-1> face_quadrature(free_surface_fe.degree+1);
+    UpdateFlags update_flags = UpdateFlags(update_JxW_values);
+    FEFaceValues<dim> fe_face_values (free_surface_fe, face_quadrature, update_flags);
+
+    const unsigned int n_face_q_points = fe_face_values.n_quadrature_points;
+
+    typename DoFHandler<dim>::active_cell_iterator
+    cell = free_surface_dof_handler.begin_active(),
+    endc = free_surface_dof_handler.end();
+
+    for (; cell!=endc; ++cell)
+      if (cell->at_boundary() && cell->is_locally_owned())
+        for (unsigned int face_no=0; face_no<GeometryInfo<dim>::faces_per_cell; ++face_no)
+          if (cell->face(face_no)->at_boundary())
+            {
+              const types::boundary_id boundary_indicator
+#if DEAL_II_VERSION_GTE(8,3,0)
+                = cell->face(face_no)->boundary_id();
+#else
+                = cell->face(face_no)->boundary_indicator();
+#endif
+              if (sim.parameters.free_surface_boundary_indicators.find(boundary_indicator)
+                  == sim.parameters.free_surface_boundary_indicators.end())
+                continue;
+
+              fe_face_values.reinit (cell, face_no);
+
+              for (unsigned int point=0; point<n_face_q_points; ++point)
+                local_free_surface_area += fe_face_values.JxW(point);
+            }
+
+    global_free_surface_area = Utilities::MPI::sum( local_free_surface_area, sim.mpi_communicator );
+    const double delta_volume = current_volume - initial_domain_volume;
+    double velocity_correction;
+    if (sim.time_step == 0.0 || global_free_surface_area == 0.0)
+      velocity_correction = 0.0;
+    else
+      velocity_correction = -delta_volume/global_free_surface_area/sim.time_step;
+    return velocity_correction;
   }
 }
 
