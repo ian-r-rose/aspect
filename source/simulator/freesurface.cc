@@ -446,7 +446,7 @@ namespace aspect
                         }
 
                       cell_vector(i) += (fs_fe_face_values[extract_vel].value(i,point) * direction)
-                                        * (velocity_values[point] * direction + velocity_correction)
+                                        * (velocity_values[point] * direction - velocity_correction)
                                         * fs_fe_face_values.JxW(point);
                     }
                 }
