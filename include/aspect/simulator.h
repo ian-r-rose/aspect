@@ -1431,12 +1431,6 @@ namespace aspect
           LinearAlgebra::Vector old_mesh_displacements;
 
           /**
-           * Vector for storing the positions of the mesh vertices at the start
-           * of the simulation. This must be redistributed upon mesh refinement.
-           */
-          LinearAlgebra::Vector initial_mesh_positions;
-
-          /**
            * The matrix for solving the elliptic problem for moving the
            * internal vertices.
            */

@@ -627,44 +627,10 @@ namespace aspect
 
     mesh_displacements.reinit(mesh_locally_owned, mesh_locally_relevant, sim.mpi_communicator);
     old_mesh_displacements.reinit(mesh_locally_owned, mesh_locally_relevant, sim.mpi_communicator);
-    initial_mesh_positions.reinit(mesh_locally_owned, mesh_locally_relevant, sim.mpi_communicator);
 
     //if we are just starting, we need to initialize mesh_vertices
     if (sim.timestep_number == 0)
       {
-        LinearAlgebra::Vector distributed_initial_mesh_positions;
-        distributed_initial_mesh_positions.reinit(mesh_locally_owned, sim.mpi_communicator);
-
-        const std::vector<Point<dim> > mesh_support_points
-          = free_surface_fe.base_element(0).get_unit_support_points();
-        //At this point, the simulator should have a MappingQ set.
-        FEValues<dim> mesh_points (*sim.mapping, free_surface_fe,
-                                   mesh_support_points, update_quadrature_points);
-        std::vector<types::global_dof_index> cell_dof_indices (free_surface_fe.dofs_per_cell);
-
-        typename DoFHandler<dim>::active_cell_iterator cell = free_surface_dof_handler.begin_active(),
-                                                       endc = free_surface_dof_handler.end();
-        for (; cell != endc; ++cell)
-          if (cell->is_locally_owned())
-            {
-              mesh_points.reinit(cell);
-              cell->get_dof_indices (cell_dof_indices);
-              for (unsigned int j=0; j<free_surface_fe.base_element(0).dofs_per_cell; ++j)
-                for (unsigned int dir=0; dir<dim; ++dir)
-                  {
-                    unsigned int support_point_index
-                      = free_surface_fe.component_to_system_index( dir, //velocity component
-                                                                   j);  //dof index within component
-                    distributed_initial_mesh_positions[cell_dof_indices[support_point_index]] = mesh_points.quadrature_point(j)[dir];
-                  }
-            }
-
-        distributed_initial_mesh_positions.compress(VectorOperation::insert);
-        initial_mesh_positions = distributed_initial_mesh_positions;
-
-        //This would be  natural to use, but does not work in parallel.
-        //VectorTools::get_position_vector( free_surface_dof_handler, initial_mesh_positions, ComponentMask(dim, true));
-
         mesh_displacements = 0.;
         old_mesh_displacements = 0.;
         mesh_velocity = 0.;

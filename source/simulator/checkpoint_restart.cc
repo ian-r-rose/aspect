@@ -109,7 +109,7 @@ namespace aspect
 
       //If we are using a free surface, also serialize the mesh vertices vector, which
       //uses its own dof handler
-      std::vector<const LinearAlgebra::Vector *> x_fs_system (2);
+      std::vector<const LinearAlgebra::Vector *> x_fs_system (1);
       std_cxx11::unique_ptr<parallel::distributed::SolutionTransfer<dim,LinearAlgebra::Vector> > freesurface_trans;
       if (parameters.free_surface_enabled)
         {
@@ -117,7 +117,6 @@ namespace aspect
                                    (free_surface->free_surface_dof_handler));
 
           x_fs_system[0] = &free_surface->mesh_displacements;
-          x_fs_system[1] = &free_surface->initial_mesh_positions;
 
           freesurface_trans->prepare_serialization(x_fs_system);
         }
@@ -254,15 +253,11 @@ namespace aspect
         parallel::distributed::SolutionTransfer<dim, LinearAlgebra::Vector> freesurface_trans( free_surface->free_surface_dof_handler );
         LinearAlgebra::Vector distributed_mesh_displacements( free_surface->mesh_locally_owned,
                                                               mpi_communicator );
-        LinearAlgebra::Vector distributed_initial_mesh_positions( free_surface->mesh_locally_owned,
-                                                                  mpi_communicator );
-        std::vector<LinearAlgebra::Vector *> fs_system(2);
+        std::vector<LinearAlgebra::Vector *> fs_system(1);
         fs_system[0] = &distributed_mesh_displacements;
-        fs_system[1] = &distributed_initial_mesh_positions;
 
         freesurface_trans.deserialize (fs_system);
         free_surface->mesh_displacements = distributed_mesh_displacements;
-        free_surface->initial_mesh_positions = distributed_initial_mesh_positions;
 
         free_surface->detach_manifolds();
       }

@@ -1532,14 +1532,13 @@ namespace aspect
     parallel::distributed::SolutionTransfer<dim,LinearAlgebra::BlockVector>
     system_trans(dof_handler);
 
-    std::vector<const LinearAlgebra::Vector *> x_fs_system (2);
+    std::vector<const LinearAlgebra::Vector *> x_fs_system (1);
     std_cxx11::unique_ptr<parallel::distributed::SolutionTransfer<dim,LinearAlgebra::Vector> >
     freesurface_trans;
 
     if (parameters.free_surface_enabled)
       {
         x_fs_system[0] = &free_surface->mesh_displacements;
-        x_fs_system[1] = &free_surface->initial_mesh_positions;
         freesurface_trans.reset (new parallel::distributed::SolutionTransfer<dim,LinearAlgebra::Vector>
                                  (free_surface->free_surface_dof_handler));
       }
@@ -1606,22 +1605,16 @@ namespace aspect
           free_surface->mesh_velocity = distributed_mesh_velocity;
 
           LinearAlgebra::Vector distributed_mesh_displacements;
-          LinearAlgebra::Vector distributed_initial_mesh_positions;
 
           distributed_mesh_displacements.reinit(free_surface->mesh_locally_owned,
                                                 mpi_communicator);
-          distributed_initial_mesh_positions.reinit(free_surface->mesh_locally_owned,
-                                                    mpi_communicator);
 
-          std::vector<LinearAlgebra::Vector *> system_tmp (2);
+          std::vector<LinearAlgebra::Vector *> system_tmp (1);
           system_tmp[0] = &distributed_mesh_displacements;
-          system_tmp[1] = &distributed_initial_mesh_positions;
 
           freesurface_trans->interpolate (system_tmp);
           free_surface->mesh_vertex_constraints.distribute (distributed_mesh_displacements);
-          free_surface->mesh_vertex_constraints.distribute (distributed_initial_mesh_positions);
           free_surface->mesh_displacements = distributed_mesh_displacements;
-          free_surface->initial_mesh_positions = distributed_initial_mesh_positions;
         }
 
       // Possibly load data of plugins associated with cells
