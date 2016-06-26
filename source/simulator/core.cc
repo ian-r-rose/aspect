@@ -1202,11 +1202,7 @@ namespace aspect
     //surface active, since the mapping must be in place before applying boundary
     //conditions that rely on it (such as no flux bcs).
     if (parameters.free_surface_enabled)
-      {
-        free_surface->setup_dofs();
-        //mapping.reset( new MappingQ<dim>( geometry_model->has_curved_elements() ? 4 : 1,
-        //                                  geometry_model->has_curved_elements() ? true : false ) );
-      }
+      free_surface->setup_dofs();
 
 
     //reinit the constraints matrix and make hanging node constraints
