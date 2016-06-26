@@ -29,6 +29,7 @@
 
 #include <deal.II/fe/fe_values.h>
 #include <deal.II/fe/mapping_q1_eulerian.h>
+#include <deal.II/fe/mapping_q1.h>
 
 #include <deal.II/lac/sparsity_tools.h>
 
@@ -265,8 +266,9 @@ namespace aspect
         if (mesh_displacement_constraints.can_store_line(index))
           if (mesh_displacement_constraints.is_constrained(index)==false)
             {
+              const double integrated_displacement = mesh_displacements[index] + sim.time_step*boundary_velocity[index];
               mesh_displacement_constraints.add_line(index);
-              mesh_displacement_constraints.set_inhomogeneity(index, sim.time_step*boundary_velocity[index]);
+              mesh_displacement_constraints.set_inhomogeneity(index, integrated_displacement);
             }
       }
 
@@ -415,7 +417,8 @@ namespace aspect
   {
     QGauss<dim> quadrature(free_surface_fe.degree + 1);
     UpdateFlags update_flags = UpdateFlags(update_values | update_JxW_values | update_gradients);
-    FEValues<dim> fe_values (*sim.mapping, free_surface_fe, quadrature, update_flags);
+
+    FEValues<dim> fe_values (free_surface_fe, quadrature, update_flags);
 
     const unsigned int dofs_per_cell = fe_values.dofs_per_cell,
                        dofs_per_face = sim.finite_element.dofs_per_face,
@@ -519,12 +522,12 @@ namespace aspect
     sim.pcout << "   Solving mesh velocity system... " << solver_control.last_step() <<" iterations."<< std::endl;
 
     mesh_displacement_constraints.distribute (displacement_solution);
-    LinearAlgebra::Vector distributed_mesh_displacements(mesh_locally_owned, sim.mpi_communicator);
-    distributed_mesh_displacements = mesh_displacements;
-    distributed_mesh_displacements.add(1.0, displacement_solution);
+    //LinearAlgebra::Vector distributed_mesh_displacements(mesh_locally_owned, sim.mpi_communicator);
+    //distributed_mesh_displacements = mesh_displacements;
+    //distributed_mesh_displacements.add(1.0, displacement_solution);
 
     old_mesh_displacements = mesh_displacements;
-    mesh_displacements = distributed_mesh_displacements;
+    mesh_displacements = displacement_solution;
   }
 
 
