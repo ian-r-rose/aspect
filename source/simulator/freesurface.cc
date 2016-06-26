@@ -186,17 +186,6 @@ namespace aspect
     if (!sim.parameters.free_surface_enabled)
       return;
 
-    //We would like to make sure that the mesh stays conforming upon
-    //redistribution, so we construct mesh_vertex_constraints, which
-    //keeps track of hanging node constraints.
-    mesh_vertex_constraints.clear();
-    mesh_vertex_constraints.reinit(mesh_locally_relevant);
-
-    DoFTools::make_hanging_node_constraints(free_surface_dof_handler, mesh_vertex_constraints);
-
-    //We can safely close this now
-    mesh_vertex_constraints.close();
-
     //Now construct the mesh displacement constraints
     mesh_displacement_constraints.clear();
     mesh_displacement_constraints.reinit(mesh_locally_relevant);
@@ -635,6 +624,21 @@ namespace aspect
         old_mesh_displacements = 0.;
         mesh_velocity = 0.;
       }
+
+    //We would like to make sure that the mesh stays conforming upon
+    //redistribution, so we construct mesh_vertex_constraints, which
+    //keeps track of hanging node constraints.
+    //Note: this would be a more natural fit in make_constraints(),
+    //but we would like to be able to apply vertex constraints directly
+    //after setup_dofs(), as is done, for instance, during mesh
+    //refinement.
+    mesh_vertex_constraints.clear();
+    mesh_vertex_constraints.reinit(mesh_locally_relevant);
+
+    DoFTools::make_hanging_node_constraints(free_surface_dof_handler, mesh_vertex_constraints);
+
+    //We can safely close this now
+    mesh_vertex_constraints.close();
 
     //Now reset the mapping of the simulator to be something that captures mesh deformation in time.
     sim.mapping.reset( new MappingQ1Eulerian<dim, LinearAlgebra::Vector>( mesh_displacements, free_surface_dof_handler ) );
