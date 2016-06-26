@@ -498,15 +498,13 @@ namespace aspect
         //Allocate the FreeSurfaceHandler object
         free_surface.reset( new FreeSurfaceHandler( *this, prm ) );
       }
-    else
-      {
-        //Otherwise, the mapping is given by a degree four MappingQ for the case
-        //of a curved mesh, and a degree one MappingQ for a rectangular mesh.
-        //The mapping for the case with a free surface is given in setup_dofs(), after
-        //the mesh displacement object has been initialized.
-        mapping.reset( new MappingQ<dim>( geometry_model->has_curved_elements() ? 4 : 1,
-                                          geometry_model->has_curved_elements() ? true : false ) );
-      }
+
+    //The mapping is given by a degree four MappingQ for the case
+    //of a curved mesh, and a degree one MappingQ for a rectangular mesh.
+    //If a free surface is enabled, this is swapped out for a MappingQ1Eulerian,
+    //which allows for mesh deformation.
+    mapping.reset( new MappingQ<dim>( geometry_model->has_curved_elements() ? 4 : 1,
+                                      geometry_model->has_curved_elements() ? true : false ) );
 
     // Initialize the melt handler
     if (parameters.include_melt_transport)
@@ -1533,21 +1531,32 @@ namespace aspect
     x_system[1] = &old_solution;
 
     if (parameters.free_surface_enabled)
-      {
-        x_system.push_back( &free_surface->mesh_velocity );
-        x_system.push_back( &free_surface->mesh_displacements );
-        x_system.push_back( &free_surface->old_mesh_displacements );
-        x_system.push_back( &free_surface->initial_mesh_positions );
-      }
+      x_system.push_back( &free_surface->mesh_velocity );
 
     parallel::distributed::SolutionTransfer<dim,LinearAlgebra::BlockVector>
     system_trans(dof_handler);
+
+    std::vector<const LinearAlgebra::Vector *> x_fs_system (2);
+    std_cxx11::unique_ptr<parallel::distributed::SolutionTransfer<dim,LinearAlgebra::Vector> >
+    freesurface_trans;
+
+    if (parameters.free_surface_enabled)
+      {
+        x_fs_system[0] = &free_surface->mesh_displacements;
+        x_fs_system[1] = &free_surface->initial_mesh_positions;
+        freesurface_trans.reset (new parallel::distributed::SolutionTransfer<dim,LinearAlgebra::Vector>
+                                 (free_surface->free_surface_dof_handler));
+      }
+
 
     // Possibly store data of plugins associated with cells
     signals.pre_refinement_store_user_data(triangulation);
 
     triangulation.prepare_coarsening_and_refinement();
     system_trans.prepare_for_coarsening_and_refinement(x_system);
+
+    if (parameters.free_surface_enabled)
+      freesurface_trans->prepare_for_coarsening_and_refinement(x_fs_system);
 
     triangulation.execute_coarsening_and_refinement ();
     computing_timer.exit_section();
@@ -1559,31 +1568,18 @@ namespace aspect
       LinearAlgebra::BlockVector distributed_system;
       LinearAlgebra::BlockVector old_distributed_system;
       LinearAlgebra::BlockVector distributed_mesh_velocity;
-      LinearAlgebra::BlockVector distributed_mesh_displacements;
-      LinearAlgebra::BlockVector distributed_old_mesh_displacements;
-      LinearAlgebra::BlockVector distributed_initial_mesh_positions;
 
       distributed_system.reinit(introspection.index_sets.system_partitioning, mpi_communicator);
       old_distributed_system.reinit(introspection.index_sets.system_partitioning, mpi_communicator);
       if (parameters.free_surface_enabled)
-        {
-          distributed_mesh_velocity.reinit(introspection.index_sets.system_partitioning, mpi_communicator);
-          distributed_mesh_displacements.reinit(introspection.index_sets.system_partitioning, mpi_communicator);
-          distributed_old_mesh_displacements.reinit(introspection.index_sets.system_partitioning, mpi_communicator);
-          distributed_initial_mesh_positions.reinit(introspection.index_sets.system_partitioning, mpi_communicator);
-        }
+        distributed_mesh_velocity.reinit(introspection.index_sets.system_partitioning, mpi_communicator);
 
       std::vector<LinearAlgebra::BlockVector *> system_tmp (2);
       system_tmp[0] = &distributed_system;
       system_tmp[1] = &old_distributed_system;
 
       if (parameters.free_surface_enabled)
-        {
-          system_tmp.push_back(&distributed_mesh_velocity);
-          system_tmp.push_back(&distributed_mesh_displacements);
-          system_tmp.push_back(&distributed_old_mesh_displacements);
-          system_tmp.push_back(&distributed_initial_mesh_positions);
-        }
+        system_tmp.push_back(&distributed_mesh_velocity);
 
       // transfer the data previously stored into the vectors indexed by
       // system_tmp. then ensure that the interpolated solution satisfies
@@ -1607,16 +1603,29 @@ namespace aspect
       constraints.distribute (old_distributed_system);
       old_solution = old_distributed_system;
 
+      // do the same as above also for the free surface solution
       if (parameters.free_surface_enabled)
         {
           constraints.distribute (distributed_mesh_velocity);
           free_surface->mesh_velocity = distributed_mesh_velocity;
-          constraints.distribute (distributed_mesh_displacements);
-          free_surface->mesh_velocity = distributed_mesh_displacements;
-          constraints.distribute (distributed_old_mesh_displacements);
-          free_surface->mesh_velocity = distributed_old_mesh_displacements;
-          constraints.distribute (distributed_initial_mesh_positions);
-          free_surface->mesh_velocity = distributed_initial_mesh_positions;
+
+          LinearAlgebra::Vector distributed_mesh_displacements;
+          LinearAlgebra::Vector distributed_initial_mesh_positions;
+
+          distributed_mesh_displacements.reinit(free_surface->mesh_locally_owned,
+                                           mpi_communicator);
+          distributed_initial_mesh_positions.reinit(free_surface->mesh_locally_owned,
+                                           mpi_communicator);
+
+          std::vector<LinearAlgebra::Vector *> system_tmp (2);
+          system_tmp[0] = &distributed_mesh_displacements;
+          system_tmp[1] = &distributed_initial_mesh_positions;
+
+          freesurface_trans->interpolate (system_tmp);
+          free_surface->mesh_vertex_constraints.distribute (distributed_mesh_displacements);
+          free_surface->mesh_vertex_constraints.distribute (distributed_initial_mesh_positions);
+          free_surface->mesh_displacements = distributed_mesh_displacements;
+          free_surface->initial_mesh_positions = distributed_initial_mesh_positions;
         }
 
       // Possibly load data of plugins associated with cells

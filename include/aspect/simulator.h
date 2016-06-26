@@ -1366,19 +1366,34 @@ namespace aspect
            * Project the the Stokes velocity solution onto the
            * free surface. Called by make_constraints()
            */
-          void project_displacements_onto_boundary (LinearAlgebra::BlockVector &output);
+          void project_velocity_onto_boundary (LinearAlgebra::Vector &output);
 
           /**
-           * Actually solve the elliptic problem for the mesh velocitiy.  Just
-           * solves a vector Laplacian equation.
+           * Solve vector Laplacian equation for internal mesh displacements.
            */
-          void redistribute_mesh_positions ();
+          void compute_mesh_displacements ();
+
+          /**
+           * Calculate the velocity of the mesh for ALE corrections.
+           */
+          void calculate_mesh_velocity ();
 
           /**
            * Reference to the Simulator object to which a FreeSurfaceHandler
            * instance belongs
            */
           Simulator<dim> &sim;
+
+           /**
+           * Finite element for the free surface implementation.  Should be Q1
+           */
+          const FESystem<dim> free_surface_fe;
+
+          /**
+           * DoFHanlder for the free surface implementation
+           */
+          DoFHandler<dim> free_surface_dof_handler;
+
 
           /**
            * Stabilization parameter for the free surface.  Should be between
@@ -1399,25 +1414,35 @@ namespace aspect
            * the position of the cell in the deformed mesh. This must be
            * redistributed upon mesh refinement.
            */
-          LinearAlgebra::BlockVector mesh_displacements;
+          LinearAlgebra::Vector mesh_displacements;
 
           /**
            * Vector for storing the positions of the mesh vertices at the
            * previous timestep. This must be redistributed upon mesh refinement.
            */
-          LinearAlgebra::BlockVector old_mesh_displacements;
+          LinearAlgebra::Vector old_mesh_displacements;
 
           /**
            * Vector for storing the positions of the mesh vertices at the start
            * of the simulation. This must be redistributed upon mesh refinement.
            */
-          LinearAlgebra::BlockVector initial_mesh_positions;
+          LinearAlgebra::Vector initial_mesh_positions;
 
           /**
            * The matrix for solving the elliptic problem for moving the
            * internal vertices.
            */
-          LinearAlgebra::BlockSparseMatrix mesh_matrix;
+          LinearAlgebra::SparseMatrix mesh_matrix;
+
+          /**
+           * IndexSet for the locally owned DoFs for the mesh system
+           */
+          IndexSet mesh_locally_owned;
+
+          /**
+           * IndexSet for the locally relevant DoFs for the mesh system
+           */
+          IndexSet mesh_locally_relevant;
 
           /**
            * Storage for the mesh displacement constraints for solving the

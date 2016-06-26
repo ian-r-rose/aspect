@@ -100,17 +100,28 @@ namespace aspect
 
       //If we are using a free surface, include the mesh velocity, which uses the system dof handler
       if (parameters.free_surface_enabled)
-        {
-          x_system.push_back( &free_surface->mesh_velocity );
-          x_system.push_back( &free_surface->mesh_displacements );
-          x_system.push_back( &free_surface->old_mesh_displacements );
-          x_system.push_back( &free_surface->initial_mesh_displacements );
-        }
+        x_system.push_back( &free_surface->mesh_velocity );
 
       parallel::distributed::SolutionTransfer<dim, LinearAlgebra::BlockVector>
       system_trans (dof_handler);
 
       system_trans.prepare_serialization (x_system);
+
+      //If we are using a free surface, also serialize the mesh vertices vector, which
+      //uses its own dof handler
+      std::vector<const LinearAlgebra::Vector *> x_fs_system (2);
+      std_cxx11::unique_ptr<parallel::distributed::SolutionTransfer<dim,LinearAlgebra::Vector> > freesurface_trans;
+      if (parameters.free_surface_enabled)
+        {
+          freesurface_trans.reset (new parallel::distributed::SolutionTransfer<dim,LinearAlgebra::Vector>
+                                   (free_surface->free_surface_dof_handler));
+
+          x_fs_system[0] = &free_surface->mesh_displacements;
+          x_fs_system[1] = &free_surface->initial_mesh_positions;
+
+          freesurface_trans->prepare_serialization(x_fs_system);
+        }
+
       triangulation.save ((parameters.output_directory + "restart.mesh").c_str());
     }
 
@@ -214,26 +225,17 @@ namespace aspect
     old_old_distributed_system (system_rhs);
     LinearAlgebra::BlockVector
     distributed_mesh_velocity (system_rhs);
-    LinearAlgebra::BlockVector
-    distributed_mesh_displacements (system_rhs);
-    LinearAlgebra::BlockVector
-    distributed_old_mesh_displacements (system_rhs);
-    LinearAlgebra::BlockVector
-    distributed_initial_mesh_displacements (system_rhs);
 
     std::vector<LinearAlgebra::BlockVector *> x_system (3);
     x_system[0] = & (distributed_system);
     x_system[1] = & (old_distributed_system);
     x_system[2] = & (old_old_distributed_system);
+
     //If necessary, also include the mesh velocity for deserialization
     //with the system dof handler
     if (parameters.free_surface_enabled)
-      {
-        x_system.push_back(&distributed_mesh_velocity);
-        x_system.push_back(&distributed_mesh_displacements);
-        x_system.push_back(&distributed_old_mesh_displacements);
-        x_system.push_back(&distributed_initial_mesh_displacements);
-      }
+      x_system.push_back(&distributed_mesh_velocity);
+
     parallel::distributed::SolutionTransfer<dim, LinearAlgebra::BlockVector>
     system_trans (dof_handler);
 
@@ -247,14 +249,23 @@ namespace aspect
       {
         //copy the mesh velocity which uses the system dof handler
         free_surface->mesh_velocity = distributed_mesh_velocity;
-        free_surface->mesh_displacements = distributed_mesh_displacements;
-        free_surface->old_mesh_displacements = distributed_old_mesh_displacements;
-        free_surface->initial_mesh_displacements = distributed_initial_mesh_displacements;
 
-        //Don't use any manifolds for the cells
+        //deserialize and copy the vectors using the free surface dof handler
+        parallel::distributed::SolutionTransfer<dim, LinearAlgebra::Vector> freesurface_trans( free_surface->free_surface_dof_handler );
+        LinearAlgebra::Vector distributed_mesh_displacements( free_surface->mesh_locally_owned,
+                                                              mpi_communicator );
+        LinearAlgebra::Vector distributed_initial_mesh_positions( free_surface->mesh_locally_owned,
+                                                                  mpi_communicator );
+        std::vector<LinearAlgebra::Vector *> fs_system(2);
+        fs_system[0] = &distributed_mesh_displacements;
+        fs_system[1] = &distributed_initial_mesh_positions;
+
+        freesurface_trans.deserialize (fs_system);
+        free_surface->mesh_displacements = distributed_mesh_displacements;
+        free_surface->initial_mesh_positions = distributed_initial_mesh_positions;
+
         free_surface->detach_manifolds();
       }
-
 
     // read zlib compressed resume.z
     try
