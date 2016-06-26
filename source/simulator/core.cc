@@ -635,6 +635,12 @@ namespace aspect
     // wait if there is a thread that's still writing the statistics
     // object (set from the output_statistics() function)
     output_statistics_thread.join();
+
+    //If the free surface has swapped the mapping for
+    //a MappingQ1Eulerian, then we need to destroy
+    //the mapping before the Vector it is pointing to
+    //is destroyed.
+    mapping.reset();
   }
 
 
