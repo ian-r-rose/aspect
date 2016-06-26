@@ -18,6 +18,7 @@
   <http://www.gnu.org/licenses/>.
 */
 
+#include <aspect/simulator.h>
 
 #include <aspect/simulator.h>
 #include <aspect/postprocess/dynamic_topography.h>
