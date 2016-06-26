@@ -1203,7 +1203,15 @@ namespace aspect
       HeatingModel::Manager<dim>                                heating_model_manager;
 
       //Pointer, since we can have different types of mapping than MappingQ
-      std_cxx11::unique_ptr<Mapping<dim> >             mapping;
+      /** 
+       * Pointer to the Mapping object used by the finite elements when
+       * going from the reference cell to the cell in the computational
+       * doomain. We use a pointer since different mapping objects may
+       * be useful. In particular, when the mesh is deformable we use 
+       * a MappingQ1Eulerian object to describe the mesh deformation,
+       * swapping it in for the original MappingQ object.
+       */
+      std_cxx11::unique_ptr<Mapping<dim> >                      mapping;
 
       const FESystem<dim>                                       finite_element;
 
