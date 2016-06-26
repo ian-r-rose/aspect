@@ -1613,9 +1613,9 @@ namespace aspect
           LinearAlgebra::Vector distributed_initial_mesh_positions;
 
           distributed_mesh_displacements.reinit(free_surface->mesh_locally_owned,
-                                           mpi_communicator);
+                                                mpi_communicator);
           distributed_initial_mesh_positions.reinit(free_surface->mesh_locally_owned,
-                                           mpi_communicator);
+                                                    mpi_communicator);
 
           std::vector<LinearAlgebra::Vector *> system_tmp (2);
           system_tmp[0] = &distributed_mesh_displacements;

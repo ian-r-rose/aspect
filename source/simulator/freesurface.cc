@@ -586,9 +586,9 @@ namespace aspect
               {
                 unsigned int support_point_index
                   = sim.finite_element.component_to_system_index(/*velocity component=*/ sim.introspection.component_indices.velocities[dir],
-                                                                 /*dof index within component=*/ j);
-                distributed_mesh_velocity[cell_dof_indices[support_point_index]] = 
-                                         (displacement_values[j][dir]-old_displacement_values[j][dir])/sim.time_step;
+                                                                                         /*dof index within component=*/ j);
+                distributed_mesh_velocity[cell_dof_indices[support_point_index]] =
+                  (displacement_values[j][dir]-old_displacement_values[j][dir])/sim.time_step;
               }
         }
 

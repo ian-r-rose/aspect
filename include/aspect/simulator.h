@@ -1384,9 +1384,9 @@ namespace aspect
            */
           Simulator<dim> &sim;
 
-           /**
-           * Finite element for the free surface implementation.  Should be Q1
-           */
+          /**
+          * Finite element for the free surface implementation.  Should be Q1
+          */
           const FESystem<dim> free_surface_fe;
 
           /**
