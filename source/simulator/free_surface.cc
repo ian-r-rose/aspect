@@ -976,7 +976,6 @@ namespace aspect
       velocity_correction = 0.0;
     else
       velocity_correction = -delta_volume/global_free_surface_area/sim.time_step;
-    sim.pcout<<"Velocity correction: "<<velocity_correction<<"\t"<<delta_volume/initial_domain_volume<<std::endl;
     return velocity_correction;
   }
 }
