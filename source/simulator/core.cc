@@ -1745,18 +1745,25 @@ namespace aspect
       LinearAlgebra::BlockVector distributed_system;
       LinearAlgebra::BlockVector old_distributed_system;
       LinearAlgebra::BlockVector distributed_mesh_velocity;
+      LinearAlgebra::BlockVector distributed_eigenvector;
 
       distributed_system.reinit(introspection.index_sets.system_partitioning, mpi_communicator);
       old_distributed_system.reinit(introspection.index_sets.system_partitioning, mpi_communicator);
       if (parameters.free_surface_enabled)
+      {
         distributed_mesh_velocity.reinit(introspection.index_sets.system_partitioning, mpi_communicator);
+        distributed_eigenvector.reinit(introspection.index_sets.system_partitioning, mpi_communicator);
+      }
 
       std::vector<LinearAlgebra::BlockVector *> system_tmp (2);
       system_tmp[0] = &distributed_system;
       system_tmp[1] = &old_distributed_system;
 
       if (parameters.free_surface_enabled)
+      {
         system_tmp.push_back(&distributed_mesh_velocity);
+        system_tmp.push_back(&distributed_eigenvector);
+      }
 
       // transfer the data previously stored into the vectors indexed by
       // system_tmp. then ensure that the interpolated solution satisfies
@@ -1785,6 +1792,8 @@ namespace aspect
         {
           constraints.distribute (distributed_mesh_velocity);
           free_surface->mesh_velocity = distributed_mesh_velocity;
+          constraints.distribute (distributed_eigenvector);
+          free_surface->mesh_velocity = distributed_eigenvector;
 
           LinearAlgebra::Vector distributed_mesh_displacements;
 
@@ -1932,7 +1941,11 @@ namespace aspect
           //free_surface_execute() after the Stokes solve, it will be before we know what the appropriate
           //time step to take is, and we will timestep the boundary incorrectly.
           if (parameters.free_surface_enabled)
-            free_surface->execute ();
+            {
+              if ( (timestep_number%50 == 0 || timestep_number==1) &&  free_surface->guess_relaxation_time)
+                free_surface->compute_relaxation_timescale();
+              free_surface->execute ();
+            }
 
           assemble_advection_system (AdvectionField::temperature());
           solve_advection(AdvectionField::temperature());

@@ -68,6 +68,11 @@ namespace aspect
        */
       void apply_stabilization (const typename DoFHandler<dim>::active_cell_iterator &cell,
                                 internal::Assembly::CopyData::StokesSystem<dim>      &data);
+      /**
+       * Find the fundamental (i.e., shortest) relaxation timescale
+       * via power iteration.
+       */
+      void compute_relaxation_timescale();
 
       /**
        * Declare parameters for the free surface handling.
@@ -110,6 +115,22 @@ namespace aspect
       void interpolate_mesh_velocity ();
 
       /**
+       * Apply the ``M'' matrix to the velocity solution (i.e., the matrix
+       * on the RHS of the generalized eigenvalue problem).
+       * Used during power iteration for the fundamental mode.
+       */
+      void apply_surface_stress_matrix( const LinearAlgebra::BlockVector &invec,
+                                        LinearAlgebra::BlockVector &outvec);
+
+      /**
+       * In certain cases the overall volume of the domain can drift over time.
+       * This is a somewhat hacky solution to the problem, calculating the volume
+       * change from the beginning of the solution, then adding a small correction
+       * to the free surface velocity to get rid of it.
+       */
+      double compute_velocity_correction ();
+
+      /**
        * Reference to the Simulator object to which a FreeSurfaceHandler
        * instance belongs.
        */
@@ -135,10 +156,39 @@ namespace aspect
       double free_surface_theta;
 
       /**
+       * Surface relaxation time constant for stabilization.
+       */
+      double relaxation_time;
+
+      /**
+       * Whether to use the nonstandard finite difference scheme.
+       */
+      bool use_nsfd;
+
+      /**
+       * Whether to guess the relaxation time for nonstandard finite
+       * differences, or to use the value supplied in the parameter file.
+       */
+      bool guess_relaxation_time;
+
+      /**
+       * Initial volume of the domain. Over long time integrations, small
+       * errors in the advection of the surface can cause drift in the overall
+       * domain volume. We can apply a correction to keep the volume steady.
+       */
+      double initial_domain_volume;
+
+      /**
        * BlockVector which stores the mesh velocity.
        * This is used for ALE corrections.
        */
       LinearAlgebra::BlockVector mesh_velocity;
+
+      /**
+       * BlockVector which stores the principal eigenvector of the
+       * free surface system, if that is calculated.
+       */
+      LinearAlgebra::BlockVector eigenvector;
 
       /**
        * Vector for storing the positions of the mesh vertices. This

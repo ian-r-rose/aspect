@@ -18,6 +18,7 @@
   <http://www.gnu.org/licenses/>.
  */
 
+#include <boost/math/special_functions/expm1.hpp>
 
 #include <aspect/simulator.h>
 #include <aspect/free_surface.h>
@@ -27,6 +28,8 @@
 #include <deal.II/dofs/dof_renumbering.h>
 #include <deal.II/dofs/dof_accessor.h>
 #include <deal.II/dofs/dof_tools.h>
+
+#include <deal.II/grid/grid_tools.h>
 
 #include <deal.II/fe/fe_values.h>
 #include <deal.II/fe/mapping_q1_eulerian.h>
@@ -118,6 +121,25 @@ namespace aspect
                          "may have provided for each part of the boundary. You may want "
                          "to compare this with the documentation of the geometry model you "
                          "use in your model.");
+      prm.declare_entry("Use nonstandard finite difference scheme", "false",
+                        Patterns::Bool(),
+                        "Whether to advect the free surface using nonstandard finite "
+                        "differences. This is an alternative stabilization scheme to "
+                        "that of Kaus et. al. (2000), and should not be combined with "
+                        "that scheme. It requires an estimate of fastest relaxation time "
+                        "of the free surface system.");
+      prm.declare_entry("Relaxation time", "0.0",
+                        Patterns::Double(0.),
+                        "Relaxation timescale for the nonstandard finite difference "
+                        "stabilization scheme. This should be chosen to be as close "
+                        "as possible to the fastest relaxation time of the system."
+                        "In general, this will correspond to the longest wavelength "
+                        "deformation mode of the system.  If it is set to zero, then "
+                        "we attempt to estimate the fastest relaxation time using "
+                        "power iteration for the generalized eigenvalue problem."
+                        "Both this scheme and the quasi-implicit theta scheme are meant "
+                        "to stabilize the free surface, so it doesn't necessarily "
+                        "make sense to use both at the same time. ");
     }
     prm.leave_subsection ();
   }
@@ -128,8 +150,10 @@ namespace aspect
     prm.enter_subsection ("Free surface");
     {
       free_surface_theta = prm.get_double("Free surface stabilization theta");
-      std::string advection_dir = prm.get("Surface velocity projection");
+      AssertThrow(free_surface_theta >= 0. && free_surface_theta <= 1.0,
+                  ExcMessage("Free surface stabilization theta must be between zero and one") );
 
+      std::string advection_dir = prm.get("Surface velocity projection");
       if ( advection_dir == "normal")
         advection_direction = SurfaceAdvection::normal;
       else if ( advection_dir == "vertical")
@@ -156,6 +180,16 @@ namespace aspect
                                           "the conversion function complained as follows: "
                                           + error));
         }
+      use_nsfd = prm.get_bool("Use nonstandard finite difference scheme");
+      relaxation_time = prm.get_double("Relaxation time");
+      if (sim.parameters.convert_to_years)
+        relaxation_time *= year_in_seconds;
+      AssertThrow(relaxation_time >= 0.0,
+                  ExcMessage("Relaxation time must be greater than zero") );
+      guess_relaxation_time = (relaxation_time == 0.0 && use_nsfd);
+
+      if (use_nsfd && (free_surface_theta != 0.0) )
+        sim.pcout<<"Warning: using more than one stabilization scheme for the free surface at the same time."<<std::endl;
     }
     prm.leave_subsection ();
   }
@@ -288,6 +322,7 @@ namespace aspect
   void FreeSurfaceHandler<dim>::project_velocity_onto_boundary(LinearAlgebra::Vector &output)
   {
     // TODO: should we use the extrapolated solution?
+    const double velocity_correction = compute_velocity_correction();
 
     //stuff for iterating over the mesh
     QGauss<dim-1> face_quadrature(free_surface_fe.degree+1);
@@ -394,7 +429,7 @@ namespace aspect
                         }
 
                       cell_vector(i) += (fs_fe_face_values[extract_vel].value(i,point) * direction)
-                                        * (velocity_values[point] * direction)
+                                        * (velocity_values[point] * direction + velocity_correction)
                                         * fs_fe_face_values.JxW(point);
                     }
                 }
@@ -535,11 +570,11 @@ namespace aspect
     //Update the mesh displacement vector
     LinearAlgebra::Vector distributed_mesh_displacements(mesh_locally_owned, sim.mpi_communicator);
     distributed_mesh_displacements = mesh_displacements;
-    distributed_mesh_displacements.add(sim.time_step, velocity_solution);
+    const double pseudo_timestep =  ( !use_nsfd ? sim.time_step : -boost::math::expm1( -sim.time_step/relaxation_time )*relaxation_time);
+    distributed_mesh_displacements.add(pseudo_timestep, velocity_solution);
     mesh_displacements = distributed_mesh_displacements;
 
   }
-
 
   template <int dim>
   void FreeSurfaceHandler<dim>::interpolate_mesh_velocity()
@@ -600,6 +635,9 @@ namespace aspect
     mesh_velocity.reinit(sim.introspection.index_sets.system_partitioning,
                          sim.introspection.index_sets.system_relevant_partitioning,
                          sim.mpi_communicator);
+    eigenvector.reinit(sim.introspection.index_sets.system_partitioning,
+                       sim.introspection.index_sets.system_relevant_partitioning,
+                       sim.mpi_communicator);
 
 
     free_surface_dof_handler.distribute_dofs(free_surface_fe);
@@ -623,7 +661,11 @@ namespace aspect
 
     //if we are just starting, we need to initialize the mesh displacement vector.
     if (sim.timestep_number == 0)
-      mesh_displacements = 0.;
+      {
+        mesh_displacements = 0.;
+        //Also compute the initial volume of the domain
+        initial_domain_volume = GridTools::volume(sim.triangulation, *sim.mapping);
+      }
 
     //We would like to make sure that the mesh stays conforming upon
     //redistribution, so we construct mesh_vertex_constraints, which
@@ -734,6 +776,208 @@ namespace aspect
                   }
           }
 
+  }
+
+  template <int dim>
+  void
+  FreeSurfaceHandler<dim>::apply_surface_stress_matrix( const LinearAlgebra::BlockVector &invec,
+                                                        LinearAlgebra::BlockVector &outvec)
+  {
+    //Matrix-free application of the surface stress matrix for use
+    //in power iteration of generalized eigenvalue problem.
+    QGauss<dim-1> quadrature(sim.parameters.stokes_velocity_degree+1);
+    UpdateFlags update_flags = UpdateFlags(update_values | update_normal_vectors |
+                                           update_quadrature_points | update_JxW_values);
+    FEFaceValues<dim> fe_face_values (*sim.mapping, sim.finite_element, quadrature, update_flags);
+    const unsigned int n_face_q_points = fe_face_values.n_quadrature_points;
+    std::vector<types::global_dof_index> local_dof_indices(sim.finite_element.dofs_per_cell);
+
+    //Setup for vectors
+    Vector<double> local_vector(sim.finite_element.dofs_per_cell);
+
+    MaterialModel::MaterialModelInputs<dim> in(n_face_q_points,
+                                               sim.parameters.n_compositional_fields);
+    MaterialModel::MaterialModelOutputs<dim> out(n_face_q_points,
+                                                 sim.parameters.n_compositional_fields);
+    std::vector<std::vector<double> > composition_values (sim.parameters.n_compositional_fields,std::vector<double> (n_face_q_points));
+
+    outvec = 0.;
+    outvec.compress(VectorOperation::insert);
+
+    typename DoFHandler<dim>::active_cell_iterator
+    cell = sim.dof_handler.begin_active(),
+    endc= sim.dof_handler.end();
+    for (; cell != endc; ++cell)
+      //only apply on free surface faces
+      if (cell->at_boundary() && cell->is_locally_owned())
+        for (unsigned int face_no=0; face_no<GeometryInfo<dim>::faces_per_cell; ++face_no)
+          if (cell->face(face_no)->at_boundary())
+            {
+              const types::boundary_id boundary_indicator
+#if DEAL_II_VERSION_GTE(8,3,0)
+                = cell->face(face_no)->boundary_id();
+#else
+                = cell->face(face_no)->boundary_indicator();
+#endif
+              if (sim.parameters.free_surface_boundary_indicators.find(boundary_indicator)
+                  == sim.parameters.free_surface_boundary_indicators.end())
+                continue;
+
+              cell->get_dof_indices(local_dof_indices);
+
+              local_vector = 0.;
+              fe_face_values.reinit(cell, face_no);
+              std::vector<Point<dim> > quad_points = fe_face_values.get_quadrature_points();
+
+              //Evaluate the density at the surface quadrature points
+              fe_face_values[sim.introspection.extractors.temperature]
+              .get_function_values (invec, in.temperature);
+              fe_face_values[sim.introspection.extractors.pressure]
+              .get_function_values (invec, in.pressure);
+              fe_face_values[sim.introspection.extractors.velocities]
+              .get_function_values (invec, in.velocity);
+
+              in.position = quad_points;
+              in.strain_rate.resize(0);  //no need for viscosity
+
+              for (unsigned int c=0; c<sim.parameters.n_compositional_fields; ++c)
+                fe_face_values[sim.introspection.extractors.compositional_fields[c]]
+                .get_function_values(invec,
+                                     composition_values[c]);
+              for (unsigned int i=0; i<fe_face_values.n_quadrature_points; ++i)
+                {
+                  for (unsigned int c=0; c<sim.parameters.n_compositional_fields; ++c)
+                    in.composition[i][c] = composition_values[c][i];
+                }
+
+              sim.material_model->evaluate(in, out);
+
+              for (unsigned int q_point = 0; q_point < n_face_q_points; ++q_point)
+                for (unsigned int i=0; i< fe_face_values.dofs_per_cell; ++i)
+                  {
+                    const Tensor<1,dim> gravity = sim.gravity_model->gravity_vector(quad_points[q_point]);
+                    double g_norm = gravity.norm();
+
+                    //construct the relevant vectors
+                    const Tensor<1,dim> v =     in.velocity[q_point];
+                    const Tensor<1,dim> n_hat = fe_face_values.normal_vector(q_point);
+                    const Tensor<1,dim> w =     fe_face_values[sim.introspection.extractors.velocities].value(i, q_point);
+
+                    const double stress_value = out.densities[q_point]*g_norm*
+                                                (w*n_hat) * (v*n_hat)
+                                                *fe_face_values.JxW(q_point);
+                    local_vector(i) += stress_value;
+                  }
+              sim.current_constraints.distribute_local_to_global( local_vector, local_dof_indices, outvec );
+            }
+    outvec.compress(VectorOperation::add);
+  }
+
+  template <int dim>
+  void
+  FreeSurfaceHandler<dim>::compute_relaxation_timescale()
+  {
+    sim.pcout<<"Entering power iteration"<<std::endl;
+
+    //store the solution vector
+    LinearAlgebra::BlockVector store_solution(sim.solution);
+    sim.rebuild_stokes_matrix = sim.rebuild_stokes_preconditioner = true;
+
+    //Assemble system
+    sim.assemble_stokes_system();
+    sim.build_stokes_preconditioner();
+
+    double target_norm = sim.system_rhs.l2_norm();
+    double timescale = 0., prev_timescale = 0.;
+    LinearAlgebra::BlockVector dist_solution(sim.introspection.index_sets.system_partitioning, sim.mpi_communicator);
+    LinearAlgebra::BlockVector guess(sim.introspection.index_sets.system_partitioning, sim.mpi_communicator);
+    if (sim.timestep_number == 0 && sim.pre_refinement_step == 0) eigenvector = sim.system_rhs;
+
+    unsigned int iter = 0;
+    const unsigned int max_iter = 30;
+    guess = eigenvector;
+    dist_solution = sim.solution;
+    do
+      {
+        prev_timescale = timescale;
+        const double initial_norm = (iter == 0 ? guess.l2_norm() : dist_solution.l2_norm());
+
+        if (iter == 0)
+          apply_surface_stress_matrix( eigenvector, guess );
+        else
+          apply_surface_stress_matrix( sim.solution, guess );
+        const double scale_factor = target_norm/guess.l2_norm();
+        guess *= scale_factor;
+        sim.system_rhs = guess;
+
+        sim.solve_stokes();
+
+        dist_solution = sim.solution;
+        const double lambda = dist_solution.l2_norm()/initial_norm/scale_factor;
+        timescale = 1./lambda / (sim.parameters.convert_to_years ? year_in_seconds : 1.0 );
+        sim.pcout<<"    Power iteration timescale : "<< timescale <<std::endl;
+        iter++;
+      }
+    while ( std::abs((timescale-prev_timescale)/timescale) > 0.001 && iter < max_iter);
+
+    eigenvector = sim.solution;
+    if ( guess_relaxation_time )
+      {
+        relaxation_time = timescale * (sim.parameters.convert_to_years ? year_in_seconds : 1.0 );
+        sim.pcout<<"    New relaxation timescale : "<< timescale <<std::endl;
+      }
+    sim.solution = store_solution;
+    sim.rebuild_stokes_matrix = sim.rebuild_stokes_preconditioner = true;
+  }
+
+  template <int dim>
+  double
+  FreeSurfaceHandler<dim>::compute_velocity_correction()
+  {
+    const double current_volume = GridTools::volume( sim.triangulation, *sim.mapping);
+    double local_free_surface_area = 0.;
+    double global_free_surface_area =0.;
+
+    QGauss<dim-1> face_quadrature(free_surface_fe.degree+1);
+    UpdateFlags update_flags = UpdateFlags(update_JxW_values);
+    FEFaceValues<dim> fe_face_values (free_surface_fe, face_quadrature, update_flags);
+
+    const unsigned int n_face_q_points = fe_face_values.n_quadrature_points;
+
+    typename DoFHandler<dim>::active_cell_iterator
+    cell = free_surface_dof_handler.begin_active(),
+    endc = free_surface_dof_handler.end();
+
+    for (; cell!=endc; ++cell)
+      if (cell->at_boundary() && cell->is_locally_owned())
+        for (unsigned int face_no=0; face_no<GeometryInfo<dim>::faces_per_cell; ++face_no)
+          if (cell->face(face_no)->at_boundary())
+            {
+              const types::boundary_id boundary_indicator
+#if DEAL_II_VERSION_GTE(8,3,0)
+                = cell->face(face_no)->boundary_id();
+#else
+                = cell->face(face_no)->boundary_indicator();
+#endif
+              if (sim.parameters.free_surface_boundary_indicators.find(boundary_indicator)
+                  == sim.parameters.free_surface_boundary_indicators.end())
+                continue;
+
+              fe_face_values.reinit (cell, face_no);
+
+              for (unsigned int point=0; point<n_face_q_points; ++point)
+                local_free_surface_area += fe_face_values.JxW(point);
+            }
+
+    global_free_surface_area = Utilities::MPI::sum( local_free_surface_area, sim.mpi_communicator );
+    const double delta_volume = current_volume - initial_domain_volume;
+    double velocity_correction;
+    if (sim.time_step == 0.0 || global_free_surface_area == 0.0)
+      velocity_correction = 0.0;
+    else
+      velocity_correction = -delta_volume/global_free_surface_area/sim.time_step;
+    sim.pcout<<"Velocity correction: "<<velocity_correction<<"\t"<<delta_volume/initial_domain_volume<<std::endl;
+    return velocity_correction;
   }
 }
 
