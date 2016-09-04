@@ -918,7 +918,7 @@ namespace aspect
         sim.pcout<<"    Power iteration timescale : "<< timescale <<std::endl;
         iter++;
       }
-    while ( std::abs((timescale-prev_timescale)/timescale) > 0.001 && iter < max_iter);
+    while ( std::abs((timescale-prev_timescale)/timescale) > 1.e-6 && iter < max_iter);
 
     eigenvector = sim.solution;
     if ( guess_relaxation_time )
