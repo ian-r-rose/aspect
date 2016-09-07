@@ -1709,7 +1709,10 @@ namespace aspect
     x_system[1] = &old_solution;
 
     if (parameters.free_surface_enabled)
-      x_system.push_back( &free_surface->mesh_velocity );
+      {
+        x_system.push_back( &free_surface->mesh_velocity );
+        x_system.push_back( &free_surface->eigenvector );
+      }
 
     parallel::distributed::SolutionTransfer<dim,LinearAlgebra::BlockVector>
     system_trans(dof_handler);
@@ -1793,7 +1796,7 @@ namespace aspect
           constraints.distribute (distributed_mesh_velocity);
           free_surface->mesh_velocity = distributed_mesh_velocity;
           constraints.distribute (distributed_eigenvector);
-          free_surface->mesh_velocity = distributed_eigenvector;
+          free_surface->eigenvector = distributed_eigenvector;
 
           LinearAlgebra::Vector distributed_mesh_displacements;
 
