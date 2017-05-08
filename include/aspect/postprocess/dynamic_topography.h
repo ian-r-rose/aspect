@@ -32,7 +32,7 @@ namespace aspect
   {
 
     /**
-     * A postprocessor that computes dynamic topography at the surface.
+     * A postprocessor that computes dynamic topography at the top and bottom of the domain.
      *
      * @ingroup Postprocessing
      */
@@ -47,6 +47,11 @@ namespace aspect
         std::pair<std::string,std::string>
         execute (TableHandler &statistics);
 
+        /**
+         * Return the topography vector.
+         */
+        const LinearAlgebra::BlockVector &
+        get_topography_vector() const;
 
         /**
          * Declare the parameters this class takes through input files.
@@ -58,21 +63,33 @@ namespace aspect
         /**
          * Read the parameters this class declares from the parameter file.
          */
-        virtual
         void
         parse_parameters (ParameterHandler &prm);
 
       private:
-        /**
-         * A parameter that we read from the input file that denotes whether
-         * we should subtract the mean topography or not.
-         */
-        bool subtract_mean_dyn_topography;
 
         /**
-         * A parameter allows users to set the density value outside the surface
+         * A vector which stores the surface stress values calculated
+         * by the postprocessor.
+         */
+        LinearAlgebra::BlockVector topo_vector;
+
+        /**
+         * Whether to subtract the mean dynamic topography.
+         */
+        double subtract_mean_dyn_topography;
+
+        /**
+         * A parameter allows users to set the density value
+         * above the top surface.
          */
         double density_above;
+
+        /**
+         * A parameter allows users to set the density value
+         * below the bottom surface.
+         */
+        double density_below;
     };
   }
 }

@@ -58,8 +58,15 @@ namespace aspect
       // later sent to processor 0
       std::ostringstream output;
 
-      double integrated_topography = 0;
-      double integrated_surface_area = 0;
+      double integrated_topography = 0.;
+      double integrated_surface_area = 0.;
+
+      LinearAlgebra::BlockVector distributed_topo_vector(this->introspection().index_sets.system_partitioning, this->get_mpi_communicator());
+      topo_vector.reinit(this->introspection().index_sets.system_partitioning,
+                         this->introspection().index_sets.system_relevant_partitioning,
+                         this->get_mpi_communicator());
+      topo_vector = 0.;
+      distributed_topo_vector = 0.;
 
       std::vector<std::pair<Point<dim>,double> > stored_values;
 
@@ -181,7 +188,7 @@ namespace aspect
 
 
       // Write the solution to an output file
-      // if (DT_mean_switch == true) subtract the average dynamic topography,
+      // if (subtract_mean_dyn_topography == true) subtract the average dynamic topography,
       // otherwise leave as is
       for (unsigned int i=0; i<stored_values.size(); ++i)
         {
@@ -253,6 +260,20 @@ namespace aspect
 
       return std::pair<std::string,std::string>("Writing dynamic topography:",
                                                 filename);
+    }
+
+    /**
+     * Get the the vector of dynamic topography calculated
+     * by this postprocessor. The returned vector has the same layout
+     * as the simulator solution vector, with the topography stored
+     * in the temperature component.
+     */
+    template <int dim>
+    const LinearAlgebra::BlockVector &
+    DynamicTopography<dim>::
+    get_topography_vector() const
+    {
+      return topo_vector;
     }
 
     template <int dim>
