@@ -42,8 +42,8 @@ namespace aspect
         return_value ("dynamic_topography",
                       new Vector<float>(this->get_triangulation().n_active_cells()));
 
-        Postprocess::DynamicTopography<dim> *dynamic_topography = 
-                   this->template find_postprocessor<Postprocess::DynamicTopography<dim> >();
+        Postprocess::DynamicTopography<dim> *dynamic_topography =
+          this->template find_postprocessor<Postprocess::DynamicTopography<dim> >();
         AssertThrow(dynamic_topography != NULL,
                     ExcMessage("Could not find the DynamicTopography postprocessor."));
         const LinearAlgebra::BlockVector &topography_vector = dynamic_topography->get_topography_vector();
@@ -89,14 +89,12 @@ namespace aspect
 
                 std::vector<types::global_dof_index> face_dof_indices (this->get_fe().dofs_per_face);
                 cell->face(top_face_idx)->get_dof_indices (face_dof_indices);
-               // std::cout<<"CHECK: "<<topography_vector[face_dof_indices[13]]<<"\t"<<face_dof_indices[13]<<std::endl;
                 double cell_surface_area = 0.0;
                 double dynamic_topography = 0.0;
                 for (unsigned int q=0; q<quadrature_formula.size(); ++q)
                   {
                     dynamic_topography += topo_values[q] * fe_face_values.JxW(q);
                     cell_surface_area += fe_face_values.JxW(q);
-                //    std::cout<<quadrature_formula.point(q)<<"\t"<<topo_values[q]<<"\t"<<std::endl;
                   }
                 dynamic_topography /= cell_surface_area;
                 (*return_value.second)(cell_index) = dynamic_topography;

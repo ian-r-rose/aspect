@@ -59,7 +59,7 @@ namespace aspect
         virtual
         std::list<std::string>
         required_other_postprocessors() const;
-        
+
         void
         parse_parameters (ParameterHandler &prm);
 

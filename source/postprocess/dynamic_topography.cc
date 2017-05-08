@@ -19,8 +19,6 @@
 */
 
 #include <aspect/simulator.h>
-
-#include <aspect/simulator.h>
 #include <aspect/postprocess/dynamic_topography.h>
 
 #include <aspect/postprocess/boundary_pressures.h>
@@ -37,15 +35,15 @@ namespace aspect
     std::pair<std::string,std::string>
     DynamicTopography<dim>::execute (TableHandler &)
     {
-      Postprocess::BoundaryPressures<dim> *boundary_pressures = 
-                   this->template find_postprocessor<Postprocess::BoundaryPressures<dim> >();
+      Postprocess::BoundaryPressures<dim> *boundary_pressures =
+        this->template find_postprocessor<Postprocess::BoundaryPressures<dim> >();
       AssertThrow(boundary_pressures != NULL,
                   ExcMessage("Could not find the BoundaryPressures postprocessor") );
       const double surface_pressure = boundary_pressures->pressure_at_top();
       const double bottom_pressure = boundary_pressures->pressure_at_top();
 
-      Postprocess::BoundaryDensities<dim> *boundary_densities = 
-                   this->template find_postprocessor<Postprocess::BoundaryDensities<dim> >();
+      Postprocess::BoundaryDensities<dim> *boundary_densities =
+        this->template find_postprocessor<Postprocess::BoundaryDensities<dim> >();
       AssertThrow(boundary_densities != NULL,
                   ExcMessage("Could not find the BoundaryDensities postprocessor") );
       const double surface_density = boundary_densities->density_at_top();
@@ -73,7 +71,10 @@ namespace aspect
       FEFaceValues<dim> fe_face_values (this->get_mapping(),
                                         this->get_fe(),
                                         quadrature_formula_face,
-                                        update_JxW_values | update_values | update_q_points);
+                                        update_JxW_values | 
+                                        update_values |
+                                        update_gradients |
+                                        update_q_points);
 
       MaterialModel::MaterialModelInputs<dim> in(fe_values.n_quadrature_points, this->n_compositional_fields());
       MaterialModel::MaterialModelOutputs<dim> out(fe_values.n_quadrature_points, this->n_compositional_fields());
@@ -100,11 +101,11 @@ namespace aspect
       LinearAlgebra::BlockVector distributed_stress_vector(this->introspection().index_sets.system_partitioning, this->get_mpi_communicator());
       LinearAlgebra::BlockVector distributed_topo_vector(this->introspection().index_sets.system_partitioning, this->get_mpi_communicator());
 
-      surface_stress_vector.reinit(this->introspection().index_sets.system_partitioning, 
-                                   this->introspection().index_sets.system_relevant_partitioning, 
+      surface_stress_vector.reinit(this->introspection().index_sets.system_partitioning,
+                                   this->introspection().index_sets.system_relevant_partitioning,
                                    this->get_mpi_communicator());
-      topo_vector.reinit(this->introspection().index_sets.system_partitioning, 
-                         this->introspection().index_sets.system_relevant_partitioning, 
+      topo_vector.reinit(this->introspection().index_sets.system_partitioning,
+                         this->introspection().index_sets.system_relevant_partitioning,
                          this->get_mpi_communicator());
       surface_stress_vector = 0.;
       topo_vector = 0.;
@@ -220,7 +221,7 @@ namespace aspect
                     {
                       //Viscous stress part
                       local_vector(i) += 2.0 * eta * ( epsilon_phi_u[i] * in.strain_rate[q]
-                                         - (is_compressible ? 1./3. * div_phi_u[i] * div_solution[q] : 0.0) ) * fe_values.JxW(q);
+                                                       - (is_compressible ? 1./3. * div_phi_u[i] * div_solution[q] : 0.0) ) * fe_values.JxW(q);
                       //Pressure and compressibility parts
                       local_vector(i) -= div_phi_u[i] * in.pressure[q] * fe_values.JxW(q);
                       //Force part
@@ -252,7 +253,7 @@ namespace aspect
       surface_stress_vector = distributed_stress_vector;
 
       //Now loop over the cells again and solve for the dynamic topography
-      const QGauss<dim-1> out_quadrature(quadrature_degree);
+      const QMidpoint<dim-1> out_quadrature;
       FEFaceValues<dim> fe_face_out_values (this->get_mapping(),
                                             this->get_fe(),
                                             out_quadrature,
@@ -402,6 +403,7 @@ namespace aspect
     {
       std::list<std::string> deps;
       deps.push_back("boundary pressures");
+      deps.push_back("boundary densities");
       return deps;
     }
 
