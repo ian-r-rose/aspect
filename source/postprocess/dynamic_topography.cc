@@ -250,7 +250,7 @@ namespace aspect
       FEFaceValues<dim> fe_transfer_values (this->get_mapping(),
                                             this->get_fe(),
                                             transfer_quadrature,
-                                            update_values | update_q_points);
+                                            update_values | update_gradients | update_q_points);
 
       std::vector<Tensor<1,dim> > stress_transfer_values( transfer_quadrature.size() );
       std::vector<double> topo_values( transfer_quadrature.size() );
@@ -276,8 +276,39 @@ namespace aspect
                   continue;
               }
 
-              const double density = 3000.;
               fe_transfer_values.reinit (cell, top_face_idx);
+
+              std::vector<std::vector<double> > transfer_composition_values (this->n_compositional_fields(),std::vector<double> (transfer_quadrature.size()));
+              MaterialModel::MaterialModelInputs<dim> in_transfer(fe_transfer_values.n_quadrature_points, this->n_compositional_fields());
+              MaterialModel::MaterialModelOutputs<dim> out_transfer(fe_transfer_values.n_quadrature_points, this->n_compositional_fields());
+              // get the various components of the solution, then
+              // evaluate the material properties there
+              fe_transfer_values[this->introspection().extractors.temperature]
+              .get_function_values (this->get_solution(), in_transfer.temperature);
+              fe_transfer_values[this->introspection().extractors.pressure]
+              .get_function_values (this->get_solution(), in_transfer.pressure);
+              fe_transfer_values[this->introspection().extractors.velocities]
+              .get_function_values (this->get_solution(), in_transfer.velocity);
+              fe_transfer_values[this->introspection().extractors.velocities]
+              .get_function_symmetric_gradients (this->get_solution(), in_transfer.strain_rate);
+              fe_transfer_values[this->introspection().extractors.pressure]
+              .get_function_gradients (this->get_solution(), in_transfer.pressure_gradient);
+
+              in_transfer.position = fe_transfer_values.get_quadrature_points();
+
+              for (unsigned int c=0; c<this->n_compositional_fields(); ++c)
+                fe_transfer_values[this->introspection().extractors.compositional_fields[c]]
+                .get_function_values(this->get_solution(),
+                                     transfer_composition_values[c]);
+              for (unsigned int i=0; i<n_face_q_points; ++i)
+                {
+                  for (unsigned int c=0; c<this->n_compositional_fields(); ++c)
+                    in_transfer.composition[i][c] = transfer_composition_values[c][i];
+                }
+              in_transfer.cell = &cell;
+
+              this->get_material_model().evaluate(in_transfer, out_transfer);
+
               fe_transfer_values[this->introspection().extractors.velocities].get_function_values( surface_stress_vector, stress_transfer_values );
               cell->face(top_face_idx)->get_dof_indices (face_dof_indices);
               for( unsigned int i = 0; i < face_dof_indices.size(); ++i)
@@ -292,7 +323,8 @@ namespace aspect
                       const Tensor<1,dim> gravity = this->get_gravity_model().gravity_vector(fe_transfer_values.quadrature_point(support_index));
                       const double gravity_norm = gravity.norm();
                       const Tensor<1,dim> gravity_direction = gravity/gravity.norm();
-                      const double dynamic_topography = (stress_transfer_values[support_index] * gravity_direction - surface_pressure)/density/gravity_norm;
+                      const double dynamic_topography = (stress_transfer_values[support_index] * gravity_direction - surface_pressure)
+                                                        /out_transfer.densities[support_index]/gravity_norm;
 
                       distributed_topo_vector[ face_dof_indices[i] ] = dynamic_topography;
                     }
