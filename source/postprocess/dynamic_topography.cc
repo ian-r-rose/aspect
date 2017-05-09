@@ -117,21 +117,33 @@ namespace aspect
         if (cell->is_locally_owned())
           if (cell->at_boundary())
             {
-              // see if the cell is at the *top* boundary, not just any boundary
-              unsigned int top_face_idx = numbers::invalid_unsigned_int;
-              {
-                for (unsigned int f=0; f<GeometryInfo<dim>::faces_per_cell; ++f)
-                  if (cell->at_boundary(f) && this->get_geometry_model().depth (cell->face(f)->center()) < cell->face(f)->minimum_vertex_distance()/3)
+              // see if the cell is at the *top* or *bottom* boundary, not just any boundary
+              unsigned int face_idx = numbers::invalid_unsigned_int;
+              for (unsigned int f=0; f<GeometryInfo<dim>::faces_per_cell; ++f)
+                {
+                  const double depth_face_center = this->get_geometry_model().depth (cell->face(f)->center());
+                  const double upper_depth_cutoff = cell->face(f)->minimum_vertex_distance()/3.0;
+                  const double lower_depth_cutoff = this->get_geometry_model().maximal_depth() - cell->face(f)->minimum_vertex_distance()/3.0;
+
+                  // Check if cell is at upper and lower surface at the same time
+                  if (depth_face_center < upper_depth_cutoff && depth_face_center > lower_depth_cutoff)
+                    AssertThrow(false, ExcMessage("Your geometry is model so small that the upper and lower boundary of "
+                                                  "the domain are bordered by the same cell. "
+                                                  "Consider using a higher mesh resolution.") );
+
+                 // Check if the face is at the top or bottom boundary
+                  if (depth_face_center < upper_depth_cutoff || depth_face_center > lower_depth_cutoff)
                     {
-                      top_face_idx = f;
+                      face_idx = f;
                       break;
                     }
+                }
 
-                if (top_face_idx == numbers::invalid_unsigned_int)
-                  continue;
-              }
+              if (face_idx == numbers::invalid_unsigned_int)
+                continue;
+
               fe_values.reinit (cell);
-              fe_face_values.reinit (cell, top_face_idx);
+              fe_face_values.reinit (cell, face_idx);
 
               local_vector = 0.;
               local_mass_matrix = 0.;
@@ -263,20 +275,43 @@ namespace aspect
           if (cell->at_boundary())
             {
               // see if the cell is at the *top* boundary, not just any boundary
-              unsigned int top_face_idx = numbers::invalid_unsigned_int;
-              {
-                for (unsigned int f=0; f<GeometryInfo<dim>::faces_per_cell; ++f)
-                  if (cell->at_boundary(f) && this->get_geometry_model().depth (cell->face(f)->center()) < cell->face(f)->minimum_vertex_distance()/3)
+              unsigned int face_idx = numbers::invalid_unsigned_int;
+              // if the face is at the upper surface 'at_upper_surface' will be true, if
+              // it is at the lower surface 'at_upper_surface' will be false. The default
+              // is true and will be changed to false if it's at the lower boundary. If the
+              // cell is at neither boundary the loop will continue to the next cell.
+              bool at_upper_surface = true;
+              for (unsigned int f=0; f<GeometryInfo<dim>::faces_per_cell; ++f)
+                {
+                  const double depth_face_center = this->get_geometry_model().depth (cell->face(f)->center());
+                  const double upper_depth_cutoff = cell->face(f)->minimum_vertex_distance()/3.0;
+                  const double lower_depth_cutoff = this->get_geometry_model().maximal_depth() - cell->face(f)->minimum_vertex_distance()/3.0;
+
+                  // Check if cell is at upper and lower surface at the same time
+                  if (depth_face_center < upper_depth_cutoff && depth_face_center > lower_depth_cutoff)
+                    AssertThrow(false, ExcMessage("Your geometry is model so small that the upper and lower boundary of "
+                                                  "the domain are bordered by the same cell. "
+                                                  "Consider using a higher mesh resolution.") );
+
+                 // Check if the face is at the top or bottom boundary
+                  if (depth_face_center < upper_depth_cutoff)
                     {
-                      top_face_idx = f;
+                      at_upper_surface = true;
+                      face_idx = f;
                       break;
                     }
+                  else if (depth_face_center > lower_depth_cutoff)
+                    {
+                      at_upper_surface = false;
+                      face_idx = f;
+                      break;
+                    }
+                }
 
-                if (top_face_idx == numbers::invalid_unsigned_int)
-                  continue;
-              }
+              if (face_idx == numbers::invalid_unsigned_int)
+                continue;
 
-              fe_transfer_values.reinit (cell, top_face_idx);
+              fe_transfer_values.reinit (cell, face_idx);
 
               std::vector<std::vector<double> > transfer_composition_values (this->n_compositional_fields(),std::vector<double> (transfer_quadrature.size()));
               MaterialModel::MaterialModelInputs<dim> in_transfer(fe_transfer_values.n_quadrature_points, this->n_compositional_fields());
@@ -310,7 +345,7 @@ namespace aspect
               this->get_material_model().evaluate(in_transfer, out_transfer);
 
               fe_transfer_values[this->introspection().extractors.velocities].get_function_values( surface_stress_vector, stress_transfer_values );
-              cell->face(top_face_idx)->get_dof_indices (face_dof_indices);
+              cell->face(face_idx)->get_dof_indices (face_dof_indices);
               for( unsigned int i = 0; i < face_dof_indices.size(); ++i)
 
               for (unsigned int i = 0; i < dofs_per_face; ++i)
@@ -327,6 +362,7 @@ namespace aspect
                                                         /out_transfer.densities[support_index]/gravity_norm;
 
                       distributed_topo_vector[ face_dof_indices[i] ] = dynamic_topography;
+                      if (at_upper_surface) std::cout<<dynamic_topography<<std::endl;
                     }
                 }
             }
