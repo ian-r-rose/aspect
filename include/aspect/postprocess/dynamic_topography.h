@@ -72,12 +72,6 @@ namespace aspect
          * A vector which stores the surface stress values calculated
          * by the postprocessor.
          */
-        LinearAlgebra::BlockVector surface_stress_vector;
-
-        /**
-         * A vector which stores the surface stress values calculated
-         * by the postprocessor.
-         */
         LinearAlgebra::BlockVector topo_vector;
 
         /**

@@ -22,7 +22,6 @@
 #include <aspect/postprocess/dynamic_topography.h>
 
 #include <aspect/postprocess/boundary_pressures.h>
-#include <aspect/postprocess/boundary_densities.h>
 
 #include <deal.II/base/quadrature_lib.h>
 #include <deal.II/fe/fe_values.h>
@@ -40,14 +39,6 @@ namespace aspect
       AssertThrow(boundary_pressures != NULL,
                   ExcMessage("Could not find the BoundaryPressures postprocessor") );
       const double surface_pressure = boundary_pressures->pressure_at_top();
-      const double bottom_pressure = boundary_pressures->pressure_at_top();
-
-      Postprocess::BoundaryDensities<dim> *boundary_densities =
-        this->template find_postprocessor<Postprocess::BoundaryDensities<dim> >();
-      AssertThrow(boundary_densities != NULL,
-                  ExcMessage("Could not find the BoundaryDensities postprocessor") );
-      const double surface_density = boundary_densities->density_at_top();
-      const double bottom_density = boundary_densities->density_at_top();
 
       const unsigned int quadrature_degree = this->get_fe().base_element(this->introspection().base_elements.velocities).degree+1;
       //Gauss quadrature in the interior for best accuracy
@@ -101,13 +92,14 @@ namespace aspect
       LinearAlgebra::BlockVector distributed_stress_vector(this->introspection().index_sets.system_partitioning, this->get_mpi_communicator());
       LinearAlgebra::BlockVector distributed_topo_vector(this->introspection().index_sets.system_partitioning, this->get_mpi_communicator());
 
-      surface_stress_vector.reinit(this->introspection().index_sets.system_partitioning,
+      LinearAlgebra::BlockVector surface_stress_vector(this->introspection().index_sets.system_partitioning,
                                    this->introspection().index_sets.system_relevant_partitioning,
                                    this->get_mpi_communicator());
       topo_vector.reinit(this->introspection().index_sets.system_partitioning,
                          this->introspection().index_sets.system_relevant_partitioning,
                          this->get_mpi_communicator());
       surface_stress_vector = 0.;
+      distributed_topo_vector = 0.;
       topo_vector = 0.;
 
       // have a stream into which we write the data. the text stream is then
@@ -193,7 +185,7 @@ namespace aspect
                 fe_face_values[this->introspection().extractors.compositional_fields[c]]
                 .get_function_values(this->get_solution(),
                                      face_composition_values[c]);
-              for (unsigned int i=0; i<n_q_points; ++i)
+              for (unsigned int i=0; i<n_face_q_points; ++i)
                 {
                   for (unsigned int c=0; c<this->n_compositional_fields(); ++c)
                     in_face.composition[i][c] = face_composition_values[c][i];
@@ -253,12 +245,6 @@ namespace aspect
       surface_stress_vector = distributed_stress_vector;
 
       //Now loop over the cells again and solve for the dynamic topography
-      const QMidpoint<dim-1> out_quadrature;
-      FEFaceValues<dim> fe_face_out_values (this->get_mapping(),
-                                            this->get_fe(),
-                                            out_quadrature,
-                                            update_values | update_q_points);
-
       std::vector< Point<dim-1> > face_support_points = this->get_fe().base_element( this->introspection().base_elements.temperature ).get_unit_face_support_points();
       Quadrature<dim-1> transfer_quadrature(face_support_points);
       FEFaceValues<dim> fe_transfer_values (this->get_mapping(),
@@ -266,7 +252,6 @@ namespace aspect
                                             transfer_quadrature,
                                             update_values | update_q_points);
 
-      std::vector<Tensor<1,dim> > stress_values( out_quadrature.size() );
       std::vector<Tensor<1,dim> > stress_transfer_values( transfer_quadrature.size() );
       std::vector<double> topo_values( transfer_quadrature.size() );
       std::vector<types::global_dof_index> face_dof_indices (dofs_per_face);
@@ -291,99 +276,33 @@ namespace aspect
                   continue;
               }
 
-              fe_face_out_values.reinit (cell, top_face_idx);
-              fe_face_out_values[this->introspection().extractors.velocities].get_function_values( surface_stress_vector, stress_values );
               const double density = 3000.;
-
-              for (unsigned int q = 0; q < out_quadrature.size(); ++q)
-                {
-                  const Tensor<1,dim> gravity = this->get_gravity_model().gravity_vector( fe_face_out_values.quadrature_point(q) );
-                  const double gravity_norm = gravity.norm();
-                  const Tensor<1,dim> gravity_direction = gravity/gravity.norm();
-                  const double dynamic_topography = (stress_values[q] * gravity_direction - surface_pressure)/density/gravity_norm;
-                  stored_values.push_back( std::make_pair(fe_face_out_values.quadrature_point(q), dynamic_topography) );
-                }
-
               fe_transfer_values.reinit (cell, top_face_idx);
               fe_transfer_values[this->introspection().extractors.velocities].get_function_values( surface_stress_vector, stress_transfer_values );
               cell->face(top_face_idx)->get_dof_indices (face_dof_indices);
+              for( unsigned int i = 0; i < face_dof_indices.size(); ++i)
 
-              for (unsigned int q = 0; q < transfer_quadrature.size(); ++q)
+              for (unsigned int i = 0; i < dofs_per_face; ++i)
                 {
-                  const Tensor<1,dim> gravity = this->get_gravity_model().gravity_vector( fe_transfer_values.quadrature_point(q) );
-                  const double gravity_norm = gravity.norm();
-                  const Tensor<1,dim> gravity_direction = gravity/gravity.norm();
-                  const double dynamic_topography = (stress_transfer_values[q] * gravity_direction - surface_pressure)/density/gravity_norm;
+                  const std::pair<unsigned int, unsigned int> component_index = this->get_fe().face_system_to_component_index(i);
+                  const unsigned int component = component_index.first;
+                  const unsigned int support_index = component_index.second;
+                  if (component == this->introspection().component_indices.temperature)
+                    {
+                      const Tensor<1,dim> gravity = this->get_gravity_model().gravity_vector(fe_transfer_values.quadrature_point(support_index));
+                      const double gravity_norm = gravity.norm();
+                      const Tensor<1,dim> gravity_direction = gravity/gravity.norm();
+                      const double dynamic_topography = (stress_transfer_values[support_index] * gravity_direction - surface_pressure)/density/gravity_norm;
 
-                  const unsigned int local_index = this->get_fe().component_to_system_index( this->introspection().component_indices.temperature, q);
-                  distributed_topo_vector[ face_dof_indices[ local_index ] ] = dynamic_topography;
+                      distributed_topo_vector[ face_dof_indices[i] ] = dynamic_topography;
+                    }
                 }
             }
       distributed_topo_vector.compress(VectorOperation::insert);
       topo_vector = distributed_topo_vector;
-
-      for (unsigned int i=0; i<stored_values.size(); ++i)
-        {
-          output << stored_values[i].first
-                 << ' '
-                 << stored_values[i].second
-                 << std::endl;
-        }
-
-
       std::string filename = this->get_output_directory() +
                              "dynamic_topography." +
                              Utilities::int_to_string(this->get_timestep_number(), 5);
-      if (this->get_parameters().run_postprocessors_on_nonlinear_iterations)
-        filename.append("." + Utilities::int_to_string (this->get_nonlinear_iteration(), 4));
-
-      const unsigned int max_data_length = Utilities::MPI::max (output.str().size()+1,
-                                                                this->get_mpi_communicator());
-      const unsigned int mpi_tag = 123;
-
-      // on processor 0, collect all of the data the individual processors send
-      // and concatenate them into one file
-      if (Utilities::MPI::this_mpi_process(this->get_mpi_communicator()) == 0)
-        {
-          std::ofstream file (filename.c_str());
-
-          file << "# "
-               << ((dim==2)? "x y" : "x y z")
-               << " topography" << std::endl;
-
-          // first write out the data we have created locally
-          file << output.str();
-
-          std::string tmp;
-          tmp.resize (max_data_length, '\0');
-
-          // then loop through all of the other processors and collect
-          // data, then write it to the file
-          for (unsigned int p=1; p<Utilities::MPI::n_mpi_processes(this->get_mpi_communicator()); ++p)
-            {
-              MPI_Status status;
-              // get the data. note that MPI says that an MPI_Recv may receive
-              // less data than the length specified here. since we have already
-              // determined the maximal message length, we use this feature here
-              // rather than trying to find out the exact message length with
-              // a call to MPI_Probe.
-              MPI_Recv (&tmp[0], max_data_length, MPI_CHAR, p, mpi_tag,
-                        this->get_mpi_communicator(), &status);
-
-              // output the string. note that 'tmp' has length max_data_length,
-              // but we only wrote a certain piece of it in the MPI_Recv, ended
-              // by a \0 character. write only this part by outputting it as a
-              // C string object, rather than as a std::string
-              file << tmp.c_str();
-            }
-        }
-      else
-        // on other processors, send the data to processor zero. include the \0
-        // character at the end of the string
-        {
-          MPI_Send (&output.str()[0], output.str().size()+1, MPI_CHAR, 0, mpi_tag,
-                    this->get_mpi_communicator());
-        }
 
       return std::pair<std::string,std::string>("Writing dynamic topography:",
                                                 filename);
@@ -403,7 +322,6 @@ namespace aspect
     {
       std::list<std::string> deps;
       deps.push_back("boundary pressures");
-      deps.push_back("boundary densities");
       return deps;
     }
 
