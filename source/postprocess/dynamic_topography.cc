@@ -55,13 +55,13 @@ namespace aspect
       const unsigned int n_q_points = quadrature_formula.size();
       const unsigned int n_face_q_points = quadrature_formula_face.size();
 
-      FEValues<dim> fe_values (this->get_mapping(),
-                               this->get_fe(),
-                               quadrature_formula,
-                               update_values |
-                               update_gradients |
-                               update_q_points |
-                               update_JxW_values);
+      FEValues<dim> fe_volume_values (this->get_mapping(),
+                                      this->get_fe(),
+                                      quadrature_formula,
+                                      update_values |
+                                      update_gradients |
+                                      update_q_points |
+                                      update_JxW_values);
 
       FEFaceValues<dim> fe_face_values (this->get_mapping(),
                                         this->get_fe(),
@@ -70,15 +70,6 @@ namespace aspect
                                         update_values |
                                         update_gradients |
                                         update_q_points);
-
-      MaterialModel::MaterialModelInputs<dim> in(fe_values.n_quadrature_points, this->n_compositional_fields());
-      MaterialModel::MaterialModelOutputs<dim> out(fe_values.n_quadrature_points, this->n_compositional_fields());
-
-      MaterialModel::MaterialModelInputs<dim> in_face(fe_face_values.n_quadrature_points, this->n_compositional_fields());
-      MaterialModel::MaterialModelOutputs<dim> out_face(fe_face_values.n_quadrature_points, this->n_compositional_fields());
-
-      std::vector<std::vector<double> > composition_values (this->n_compositional_fields(),std::vector<double> (quadrature_formula.size()));
-      std::vector<std::vector<double> > face_composition_values (this->n_compositional_fields(),std::vector<double> (quadrature_formula_face.size()));
 
       //Storage for shape function values in solving CBF system
       std::vector<Tensor<1,dim> > phi_u (dofs_per_cell);
@@ -146,94 +137,46 @@ namespace aspect
               if (face_idx == numbers::invalid_unsigned_int)
                 continue;
 
-              fe_values.reinit (cell);
+              fe_volume_values.reinit (cell);
               fe_face_values.reinit (cell, face_idx);
 
               local_vector = 0.;
               local_mass_matrix = 0.;
 
-              // get the various components of the solution, then
-              // evaluate the material properties there
-              fe_values[this->introspection().extractors.temperature]
-              .get_function_values (this->get_solution(), in.temperature);
-              fe_values[this->introspection().extractors.pressure]
-              .get_function_values (this->get_solution(), in.pressure);
-              fe_values[this->introspection().extractors.velocities]
-              .get_function_values (this->get_solution(), in.velocity);
-              fe_values[this->introspection().extractors.velocities]
-              .get_function_symmetric_gradients (this->get_solution(), in.strain_rate);
-              fe_values[this->introspection().extractors.pressure]
-              .get_function_gradients (this->get_solution(), in.pressure_gradient);
-              fe_values[this->introspection().extractors.velocities]
-              .get_function_divergences (this->get_solution(), div_solution);
+              // Evaluate the material model in the cell volume.
+              MaterialModel::MaterialModelInputs<dim> in_volume(fe_volume_values, &cell, this->introspection(), this->get_solution());
+              MaterialModel::MaterialModelOutputs<dim> out_volume(fe_volume_values.n_quadrature_points, this->n_compositional_fields());
+              this->get_material_model().evaluate(in_volume, out_volume);
 
-              in.position = fe_values.get_quadrature_points();
-
-              for (unsigned int c=0; c<this->n_compositional_fields(); ++c)
-                fe_values[this->introspection().extractors.compositional_fields[c]]
-                .get_function_values(this->get_solution(),
-                                     composition_values[c]);
-              for (unsigned int i=0; i<n_q_points; ++i)
-                {
-                  for (unsigned int c=0; c<this->n_compositional_fields(); ++c)
-                    in.composition[i][c] = composition_values[c][i];
-                }
-              in.cell = &cell;
-
-              this->get_material_model().evaluate(in, out);
-
-              // get the various components of the solution, then
-              // evaluate the material properties there
-              fe_face_values[this->introspection().extractors.temperature]
-              .get_function_values (this->get_solution(), in_face.temperature);
-              fe_face_values[this->introspection().extractors.pressure]
-              .get_function_values (this->get_solution(), in_face.pressure);
-              fe_face_values[this->introspection().extractors.velocities]
-              .get_function_values (this->get_solution(), in_face.velocity);
-              fe_face_values[this->introspection().extractors.velocities]
-              .get_function_symmetric_gradients (this->get_solution(), in_face.strain_rate);
-              fe_face_values[this->introspection().extractors.pressure]
-              .get_function_gradients (this->get_solution(), in_face.pressure_gradient);
-
-              in_face.position = fe_face_values.get_quadrature_points();
-
-              for (unsigned int c=0; c<this->n_compositional_fields(); ++c)
-                fe_face_values[this->introspection().extractors.compositional_fields[c]]
-                .get_function_values(this->get_solution(),
-                                     face_composition_values[c]);
-              for (unsigned int i=0; i<n_face_q_points; ++i)
-                {
-                  for (unsigned int c=0; c<this->n_compositional_fields(); ++c)
-                    in_face.composition[i][c] = face_composition_values[c][i];
-                }
-              in_face.cell = &cell;
-
+              // Evaluate the material model on the cell face.
+              MaterialModel::MaterialModelInputs<dim> in_face(fe_face_values, &cell, this->introspection(), this->get_solution());
+              MaterialModel::MaterialModelOutputs<dim> out_face(fe_face_values.n_quadrature_points, this->n_compositional_fields());
               this->get_material_model().evaluate(in_face, out_face);
 
               for (unsigned int q=0; q<n_q_points; ++q)
                 {
-                  const double eta = out.viscosities[q];
-                  const double density = out.densities[q];
+                  const double eta = out_volume.viscosities[q];
+                  const double density = out_volume.densities[q];
                   bool is_compressible = this->get_material_model().is_compressible();
-                  Tensor<1,dim> gravity = this->get_gravity_model().gravity_vector(in.position[q]);
+                  Tensor<1,dim> gravity = this->get_gravity_model().gravity_vector(in_volume.position[q]);
 
                   //Set up shape function values
                   for (unsigned int k=0; k<dofs_per_cell; ++k)
                     {
-                      phi_u[k] = fe_values[this->introspection().extractors.velocities].value(k,q);
-                      epsilon_phi_u[k] = fe_values[this->introspection().extractors.velocities].symmetric_gradient(k,q);
-                      div_phi_u[k] = fe_values[this->introspection().extractors.velocities].divergence (k, q);
+                      phi_u[k] = fe_volume_values[this->introspection().extractors.velocities].value(k,q);
+                      epsilon_phi_u[k] = fe_volume_values[this->introspection().extractors.velocities].symmetric_gradient(k,q);
+                      div_phi_u[k] = fe_volume_values[this->introspection().extractors.velocities].divergence (k, q);
                     }
 
                   for (unsigned int i = 0; i<dofs_per_cell; ++i)
                     {
                       //Viscous stress part
-                      local_vector(i) += 2.0 * eta * ( epsilon_phi_u[i] * in.strain_rate[q]
-                                                       - (is_compressible ? 1./3. * div_phi_u[i] * div_solution[q] : 0.0) ) * fe_values.JxW(q);
+                      local_vector(i) += 2.0 * eta * ( epsilon_phi_u[i] * in_volume.strain_rate[q]
+                                         - (is_compressible ? 1./3. * div_phi_u[i] * div_solution[q] : 0.0) ) * fe_volume_values.JxW(q);
                       //Pressure and compressibility parts
-                      local_vector(i) -= div_phi_u[i] * in.pressure[q] * fe_values.JxW(q);
+                      local_vector(i) -= div_phi_u[i] * in_volume.pressure[q] * fe_volume_values.JxW(q);
                       //Force part
-                      local_vector(i) -= density * gravity * phi_u[i] * fe_values.JxW(q);
+                      local_vector(i) -= density * gravity * phi_u[i] * fe_volume_values.JxW(q);
                     }
                 }
               for (unsigned int q=0; q < n_face_q_points; ++q)
@@ -262,14 +205,14 @@ namespace aspect
 
       //Now loop over the cells again and solve for the dynamic topography
       std::vector< Point<dim-1> > face_support_points = this->get_fe().base_element( this->introspection().base_elements.temperature ).get_unit_face_support_points();
-      Quadrature<dim-1> transfer_quadrature(face_support_points);
-      FEFaceValues<dim> fe_transfer_values (this->get_mapping(),
-                                            this->get_fe(),
-                                            transfer_quadrature,
-                                            update_values | update_gradients | update_q_points);
+      Quadrature<dim-1> support_quadrature(face_support_points);
+      FEFaceValues<dim> fe_support_values (this->get_mapping(),
+                                           this->get_fe(),
+                                           support_quadrature,
+                                           update_values | update_gradients | update_q_points);
 
-      std::vector<Tensor<1,dim> > stress_transfer_values( transfer_quadrature.size() );
-      std::vector<double> topo_values( transfer_quadrature.size() );
+      std::vector<Tensor<1,dim> > stress_support_values( support_quadrature.size() );
+      std::vector<double> topo_values( support_quadrature.size() );
       std::vector<types::global_dof_index> face_dof_indices (dofs_per_face);
 
       cell = this->get_dof_handler().begin_active();
@@ -315,40 +258,14 @@ namespace aspect
               if (face_idx == numbers::invalid_unsigned_int)
                 continue;
 
-              fe_transfer_values.reinit (cell, face_idx);
+              fe_support_values.reinit (cell, face_idx);
 
-              std::vector<std::vector<double> > transfer_composition_values (this->n_compositional_fields(),std::vector<double> (transfer_quadrature.size()));
-              MaterialModel::MaterialModelInputs<dim> in_transfer(fe_transfer_values.n_quadrature_points, this->n_compositional_fields());
-              MaterialModel::MaterialModelOutputs<dim> out_transfer(fe_transfer_values.n_quadrature_points, this->n_compositional_fields());
-              // get the various components of the solution, then
-              // evaluate the material properties there
-              fe_transfer_values[this->introspection().extractors.temperature]
-              .get_function_values (this->get_solution(), in_transfer.temperature);
-              fe_transfer_values[this->introspection().extractors.pressure]
-              .get_function_values (this->get_solution(), in_transfer.pressure);
-              fe_transfer_values[this->introspection().extractors.velocities]
-              .get_function_values (this->get_solution(), in_transfer.velocity);
-              fe_transfer_values[this->introspection().extractors.velocities]
-              .get_function_symmetric_gradients (this->get_solution(), in_transfer.strain_rate);
-              fe_transfer_values[this->introspection().extractors.pressure]
-              .get_function_gradients (this->get_solution(), in_transfer.pressure_gradient);
+              // Evaluate the material model on the cell face.
+              MaterialModel::MaterialModelInputs<dim> in_support(fe_support_values, &cell, this->introspection(), this->get_solution());
+              MaterialModel::MaterialModelOutputs<dim> out_support(fe_support_values.n_quadrature_points, this->n_compositional_fields());
+              this->get_material_model().evaluate(in_support, out_support);
 
-              in_transfer.position = fe_transfer_values.get_quadrature_points();
-
-              for (unsigned int c=0; c<this->n_compositional_fields(); ++c)
-                fe_transfer_values[this->introspection().extractors.compositional_fields[c]]
-                .get_function_values(this->get_solution(),
-                                     transfer_composition_values[c]);
-              for (unsigned int i=0; i<n_face_q_points; ++i)
-                {
-                  for (unsigned int c=0; c<this->n_compositional_fields(); ++c)
-                    in_transfer.composition[i][c] = transfer_composition_values[c][i];
-                }
-              in_transfer.cell = &cell;
-
-              this->get_material_model().evaluate(in_transfer, out_transfer);
-
-              fe_transfer_values[this->introspection().extractors.velocities].get_function_values( surface_stress_vector, stress_transfer_values );
+              fe_support_values[this->introspection().extractors.velocities].get_function_values( surface_stress_vector, stress_support_values );
               cell->face(face_idx)->get_dof_indices (face_dof_indices);
               for ( unsigned int i = 0; i < face_dof_indices.size(); ++i)
 
@@ -359,22 +276,22 @@ namespace aspect
                     const unsigned int support_index = component_index.second;
                     if (component == this->introspection().component_indices.temperature)
                       {
-                        Point<dim> point = fe_transfer_values.quadrature_point(support_index);
+                        Point<dim> point = fe_support_values.quadrature_point(support_index);
                         const Tensor<1,dim> gravity = this->get_gravity_model().gravity_vector(point);
                         const double gravity_norm = gravity.norm();
                         const Tensor<1,dim> gravity_direction = gravity/gravity.norm();
                         double dynamic_topography;
                         if (at_upper_surface)
                           {
-                            const double delta_rho = out_transfer.densities[support_index] - density_above;
-                            dynamic_topography = (stress_transfer_values[support_index] * gravity_direction - surface_pressure)
+                            const double delta_rho = out_support.densities[support_index] - density_above;
+                            dynamic_topography = (stress_support_values[support_index] * gravity_direction - surface_pressure)
                                                  / delta_rho / gravity_norm;
                             stored_values_surface.push_back(std::make_pair(point, dynamic_topography));
                           }
                         else
                           {
-                            const double delta_rho = out_transfer.densities[support_index] - density_below;
-                            dynamic_topography = (-stress_transfer_values[support_index] * gravity_direction - bottom_pressure)
+                            const double delta_rho = out_support.densities[support_index] - density_below;
+                            dynamic_topography = (-stress_support_values[support_index] * gravity_direction - bottom_pressure)
                                                  / delta_rho / gravity_norm;
                             stored_values_bottom.push_back(std::make_pair(point, dynamic_topography));
                           }
