@@ -68,27 +68,40 @@ namespace aspect
           if (cell->is_locally_owned())
             if (cell->at_boundary())
               {
-                // see if the cell is at the *top* boundary, not just any boundary
-                unsigned int top_face_idx = numbers::invalid_unsigned_int;
-                {
-                  for (unsigned int f=0; f<GeometryInfo<dim>::faces_per_cell; ++f)
-                    if (cell->at_boundary(f) && this->get_geometry_model().depth (cell->face(f)->center()) < cell->face(f)->minimum_vertex_distance()/3)
+
+                // see if the cell is at the *top* or *bottom* boundary, not just any boundary
+                unsigned int face_idx = numbers::invalid_unsigned_int;
+                for (unsigned int f=0; f<GeometryInfo<dim>::faces_per_cell; ++f)
+                  {
+                    const double depth_face_center = this->get_geometry_model().depth (cell->face(f)->center());
+                    const double upper_depth_cutoff = cell->face(f)->minimum_vertex_distance()/3.0;
+                    const double lower_depth_cutoff = this->get_geometry_model().maximal_depth() - cell->face(f)->minimum_vertex_distance()/3.0;
+
+                    // Check if cell is at upper and lower surface at the same time
+                    if (depth_face_center < upper_depth_cutoff && depth_face_center > lower_depth_cutoff)
+                      AssertThrow(false, ExcMessage("Your geometry is model so small that the upper and lower boundary of "
+                                                    "the domain are bordered by the same cell. "
+                                                    "Consider using a higher mesh resolution.") );
+
+                   // Check if the face is at the top or bottom boundary
+                    if (depth_face_center < upper_depth_cutoff || depth_face_center > lower_depth_cutoff)
                       {
-                        top_face_idx = f;
+                        face_idx = f;
                         break;
                       }
-                }
-                if (top_face_idx == numbers::invalid_unsigned_int)
+                  }
+
+                if (face_idx == numbers::invalid_unsigned_int)
                   {
-                    (*return_value.second)(cell_index) = 0;
+                    (*return_value.second)(cell_index) = 0.;
                     continue;
                   }
 
-                fe_face_values.reinit (cell, top_face_idx);
+                fe_face_values.reinit (cell, face_idx);
                 fe_face_values[this->introspection().extractors.temperature].get_function_values( topography_vector, topo_values );
 
                 std::vector<types::global_dof_index> face_dof_indices (this->get_fe().dofs_per_face);
-                cell->face(top_face_idx)->get_dof_indices (face_dof_indices);
+                cell->face(face_idx)->get_dof_indices (face_dof_indices);
                 double cell_surface_area = 0.0;
                 double dynamic_topography = 0.0;
                 for (unsigned int q=0; q<quadrature_formula.size(); ++q)

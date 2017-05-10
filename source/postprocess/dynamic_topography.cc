@@ -39,6 +39,7 @@ namespace aspect
       AssertThrow(boundary_pressures != NULL,
                   ExcMessage("Could not find the BoundaryPressures postprocessor") );
       const double surface_pressure = boundary_pressures->pressure_at_top();
+      const double bottom_pressure = boundary_pressures->pressure_at_bottom();
 
       const unsigned int quadrature_degree = this->get_fe().base_element(this->introspection().base_elements.velocities).degree+1;
       //Gauss quadrature in the interior for best accuracy
@@ -358,11 +359,21 @@ namespace aspect
                       const Tensor<1,dim> gravity = this->get_gravity_model().gravity_vector(fe_transfer_values.quadrature_point(support_index));
                       const double gravity_norm = gravity.norm();
                       const Tensor<1,dim> gravity_direction = gravity/gravity.norm();
-                      const double dynamic_topography = (stress_transfer_values[support_index] * gravity_direction - surface_pressure)
-                                                        /out_transfer.densities[support_index]/gravity_norm;
-
+                      double dynamic_topography;
+                      if (at_upper_surface)
+                        {
+                          const double delta_rho = out_transfer.densities[support_index] - density_above;
+                          dynamic_topography = (stress_transfer_values[support_index] * gravity_direction - surface_pressure)
+                                               / delta_rho / gravity_norm;
+                        }
+                      else
+                        {
+                          const double delta_rho = out_transfer.densities[support_index] - density_below;
+                          dynamic_topography = (-stress_transfer_values[support_index] * gravity_direction - bottom_pressure)
+                                               / delta_rho / gravity_norm;
+                          std::cout<<"DR: "<<delta_rho<<"\tStresS: "<<stress_transfer_values[support_index] * gravity_direction<<"\tPress: "<<bottom_pressure<<std::endl;
+                        }
                       distributed_topo_vector[ face_dof_indices[i] ] = dynamic_topography;
-                      if (at_upper_surface) std::cout<<dynamic_topography<<std::endl;
                     }
                 }
             }
