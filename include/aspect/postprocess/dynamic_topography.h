@@ -51,7 +51,7 @@ namespace aspect
          * Return the topography vector as calculated by CBF formulation
          */
         const LinearAlgebra::BlockVector &
-        get_topography_vector() const;
+        topography_vector() const;
 
         /**
          * Register the other postprocessor that we need: BoundaryPressures
@@ -60,14 +60,26 @@ namespace aspect
         std::list<std::string>
         required_other_postprocessors() const;
 
+        /**
+         * Parse the parameters for the postprocessor.
+         */
         void
         parse_parameters (ParameterHandler &prm);
 
+        /**
+         * Declare the parameters for the postprocessor.
+         */
         static
         void
         declare_parameters (ParameterHandler &prm);
 
       private:
+        /**
+         * Output the dynamic topography solution to
+         * a file.
+         */
+        void output_to_file(bool upper, std::vector<std::pair<Point<dim>, double> > &values);
+
         /**
          * A vector which stores the surface stress values calculated
          * by the postprocessor.
@@ -85,6 +97,16 @@ namespace aspect
          * below the bottom surface.
          */
         double density_below;
+
+        /**
+         * Whether to output the surface topography.
+         */
+        bool output_surface;
+
+        /**
+         * Whether to output the bottom topography.
+         */
+        bool output_bottom;
     };
   }
 }

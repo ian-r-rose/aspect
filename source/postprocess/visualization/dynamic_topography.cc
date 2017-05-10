@@ -34,6 +34,9 @@ namespace aspect
   {
     namespace VisualizationPostprocessors
     {
+      /**
+       * Execute the visualization postprocessor.
+       */
       template <int dim>
       std::pair<std::string, Vector<float> *>
       DynamicTopography<dim>::execute() const
@@ -46,7 +49,7 @@ namespace aspect
           this->template find_postprocessor<Postprocess::DynamicTopography<dim> >();
         AssertThrow(dynamic_topography != NULL,
                     ExcMessage("Could not find the DynamicTopography postprocessor."));
-        const LinearAlgebra::BlockVector &topography_vector = dynamic_topography->get_topography_vector();
+        const LinearAlgebra::BlockVector &topography_vector = dynamic_topography->topography_vector();
 
         const QTrapez<dim-1> quadrature_formula;
         std::vector<Tensor<1,dim> > stress_values( quadrature_formula.size() );
@@ -83,7 +86,7 @@ namespace aspect
                                                     "the domain are bordered by the same cell. "
                                                     "Consider using a higher mesh resolution.") );
 
-                   // Check if the face is at the top or bottom boundary
+                    // Check if the face is at the top or bottom boundary
                     if (depth_face_center < upper_depth_cutoff || depth_face_center > lower_depth_cutoff)
                       {
                         face_idx = f;
@@ -116,6 +119,9 @@ namespace aspect
         return return_value;
       }
 
+      /**
+       * Register the other postprocessor that we need: DynamicTopography
+       */
       template <int dim>
       std::list<std::string>
       DynamicTopography<dim>::required_other_postprocessors() const

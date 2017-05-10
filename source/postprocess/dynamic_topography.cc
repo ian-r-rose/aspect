@@ -30,6 +30,9 @@ namespace aspect
 {
   namespace Postprocess
   {
+    /**
+     * Evaluate the solution for the dynamic topography.
+     */
     template <int dim>
     std::pair<std::string,std::string>
     DynamicTopography<dim>::execute (TableHandler &)
@@ -63,7 +66,7 @@ namespace aspect
       FEFaceValues<dim> fe_face_values (this->get_mapping(),
                                         this->get_fe(),
                                         quadrature_formula_face,
-                                        update_JxW_values | 
+                                        update_JxW_values |
                                         update_values |
                                         update_gradients |
                                         update_q_points);
@@ -94,8 +97,8 @@ namespace aspect
       LinearAlgebra::BlockVector distributed_topo_vector(this->introspection().index_sets.system_partitioning, this->get_mpi_communicator());
 
       LinearAlgebra::BlockVector surface_stress_vector(this->introspection().index_sets.system_partitioning,
-                                   this->introspection().index_sets.system_relevant_partitioning,
-                                   this->get_mpi_communicator());
+                                                       this->introspection().index_sets.system_relevant_partitioning,
+                                                       this->get_mpi_communicator());
       topo_vector.reinit(this->introspection().index_sets.system_partitioning,
                          this->introspection().index_sets.system_relevant_partitioning,
                          this->get_mpi_communicator());
@@ -103,10 +106,10 @@ namespace aspect
       distributed_topo_vector = 0.;
       topo_vector = 0.;
 
-      // have a stream into which we write the data. the text stream is then
-      // later sent to processor 0
-      std::ostringstream output;
-      std::vector<std::pair<Point<dim>,double> > stored_values;
+      // Possibly keep track of the dynamic topography values for
+      // later surface output.
+      std::vector<std::pair<Point<dim>, double> > stored_values_surface;
+      std::vector<std::pair<Point<dim>, double> > stored_values_bottom;
 
       // loop over all of the surface cells and if one less than h/3 away from
       // the top surface, evaluate the stress at its center
@@ -132,7 +135,7 @@ namespace aspect
                                                   "the domain are bordered by the same cell. "
                                                   "Consider using a higher mesh resolution.") );
 
-                 // Check if the face is at the top or bottom boundary
+                  // Check if the face is at the top or bottom boundary
                   if (depth_face_center < upper_depth_cutoff || depth_face_center > lower_depth_cutoff)
                     {
                       face_idx = f;
@@ -294,7 +297,7 @@ namespace aspect
                                                   "the domain are bordered by the same cell. "
                                                   "Consider using a higher mesh resolution.") );
 
-                 // Check if the face is at the top or bottom boundary
+                  // Check if the face is at the top or bottom boundary
                   if (depth_face_center < upper_depth_cutoff)
                     {
                       at_upper_surface = true;
@@ -347,54 +350,63 @@ namespace aspect
 
               fe_transfer_values[this->introspection().extractors.velocities].get_function_values( surface_stress_vector, stress_transfer_values );
               cell->face(face_idx)->get_dof_indices (face_dof_indices);
-              for( unsigned int i = 0; i < face_dof_indices.size(); ++i)
+              for ( unsigned int i = 0; i < face_dof_indices.size(); ++i)
 
-              for (unsigned int i = 0; i < dofs_per_face; ++i)
-                {
-                  const std::pair<unsigned int, unsigned int> component_index = this->get_fe().face_system_to_component_index(i);
-                  const unsigned int component = component_index.first;
-                  const unsigned int support_index = component_index.second;
-                  if (component == this->introspection().component_indices.temperature)
-                    {
-                      const Tensor<1,dim> gravity = this->get_gravity_model().gravity_vector(fe_transfer_values.quadrature_point(support_index));
-                      const double gravity_norm = gravity.norm();
-                      const Tensor<1,dim> gravity_direction = gravity/gravity.norm();
-                      double dynamic_topography;
-                      if (at_upper_surface)
-                        {
-                          const double delta_rho = out_transfer.densities[support_index] - density_above;
-                          dynamic_topography = (stress_transfer_values[support_index] * gravity_direction - surface_pressure)
-                                               / delta_rho / gravity_norm;
-                        }
-                      else
-                        {
-                          const double delta_rho = out_transfer.densities[support_index] - density_below;
-                          dynamic_topography = (-stress_transfer_values[support_index] * gravity_direction - bottom_pressure)
-                                               / delta_rho / gravity_norm;
-                          std::cout<<"DR: "<<delta_rho<<"\tStresS: "<<stress_transfer_values[support_index] * gravity_direction<<"\tPress: "<<bottom_pressure<<std::endl;
-                        }
-                      distributed_topo_vector[ face_dof_indices[i] ] = dynamic_topography;
-                    }
-                }
+                for (unsigned int i = 0; i < dofs_per_face; ++i)
+                  {
+                    const std::pair<unsigned int, unsigned int> component_index = this->get_fe().face_system_to_component_index(i);
+                    const unsigned int component = component_index.first;
+                    const unsigned int support_index = component_index.second;
+                    if (component == this->introspection().component_indices.temperature)
+                      {
+                        Point<dim> point = fe_transfer_values.quadrature_point(support_index);
+                        const Tensor<1,dim> gravity = this->get_gravity_model().gravity_vector(point);
+                        const double gravity_norm = gravity.norm();
+                        const Tensor<1,dim> gravity_direction = gravity/gravity.norm();
+                        double dynamic_topography;
+                        if (at_upper_surface)
+                          {
+                            const double delta_rho = out_transfer.densities[support_index] - density_above;
+                            dynamic_topography = (stress_transfer_values[support_index] * gravity_direction - surface_pressure)
+                                                 / delta_rho / gravity_norm;
+                            stored_values_surface.push_back(std::make_pair(point, dynamic_topography));
+                          }
+                        else
+                          {
+                            const double delta_rho = out_transfer.densities[support_index] - density_below;
+                            dynamic_topography = (-stress_transfer_values[support_index] * gravity_direction - bottom_pressure)
+                                                 / delta_rho / gravity_norm;
+                            stored_values_bottom.push_back(std::make_pair(point, dynamic_topography));
+                          }
+                        distributed_topo_vector[ face_dof_indices[i] ] = dynamic_topography;
+                      }
+                  }
             }
       distributed_topo_vector.compress(VectorOperation::insert);
       topo_vector = distributed_topo_vector;
-      std::string filename = this->get_output_directory() +
-                             "dynamic_topography." +
-                             Utilities::int_to_string(this->get_timestep_number(), 5);
 
-      return std::pair<std::string,std::string>("Writing dynamic topography:",
-                                                filename);
+      if (output_surface)
+          output_to_file(true, stored_values_surface);
+      if (output_bottom)
+          output_to_file(false, stored_values_bottom);
+
+      return std::pair<std::string,std::string>("Computing dynamic topography", "");
     }
 
+    /**
+     * Return the topography vector as calculated by CBF formulation
+     */
     template <int dim>
     const LinearAlgebra::BlockVector &
     DynamicTopography<dim>::
-    get_topography_vector() const
+    topography_vector() const
     {
       return topo_vector;
     }
 
+    /**
+     * Register the other postprocessor that we need: BoundaryPressures
+     */
     template <int dim>
     std::list<std::string>
     DynamicTopography<dim>::required_other_postprocessors() const
@@ -404,6 +416,83 @@ namespace aspect
       return deps;
     }
 
+    /**
+     * Output the dynamic topography solution to
+     * a file.
+     */
+    template <int dim>
+    void
+    DynamicTopography<dim>::output_to_file(bool upper, std::vector<std::pair<Point<dim>, double> > &stored_values)
+    {
+      std::ostringstream output;
+
+      for (unsigned int i=0; i<stored_values.size(); ++i)
+        {
+          output << stored_values[i].first
+                 << ' '
+                 << stored_values[i].second
+                 << std::endl;
+        }
+
+      std::string filename = this->get_output_directory() +
+                             (upper ? "dynamic_topography_surface." : "dynamic_topography_bottom.") +
+                             Utilities::int_to_string(this->get_timestep_number(), 5);
+      if (this->get_parameters().run_postprocessors_on_nonlinear_iterations)
+        filename.append("." + Utilities::int_to_string (this->get_nonlinear_iteration(), 4));
+
+      const unsigned int max_data_length = Utilities::MPI::max (output.str().size()+1,
+                                                                this->get_mpi_communicator());
+      const unsigned int mpi_tag = 123;
+
+      // on processor 0, collect all of the data the individual processors send
+      // and concatenate them into one file
+      if (Utilities::MPI::this_mpi_process(this->get_mpi_communicator()) == 0)
+        {
+          std::ofstream file (filename.c_str());
+
+          file << "# "
+               << ((dim==2)? "x y " : "x y z ")
+               << (upper ? "surface topography" : "bottom topography") << std::endl;
+
+          // first write out the data we have created locally
+          file << output.str();
+
+          std::string tmp;
+          tmp.resize (max_data_length, '\0');
+
+          // then loop through all of the other processors and collect
+          // data, then write it to the file
+          for (unsigned int p=1; p<Utilities::MPI::n_mpi_processes(this->get_mpi_communicator()); ++p)
+            {
+              MPI_Status status;
+              // get the data. note that MPI says that an MPI_Recv may receive
+              // less data than the length specified here. since we have already
+              // determined the maximal message length, we use this feature here
+              // rather than trying to find out the exact message length with
+              // a call to MPI_Probe.
+              MPI_Recv (&tmp[0], max_data_length, MPI_CHAR, p, mpi_tag,
+                        this->get_mpi_communicator(), &status);
+
+              // output the string. note that 'tmp' has length max_data_length,
+              // but we only wrote a certain piece of it in the MPI_Recv, ended
+              // by a \0 character. write only this part by outputting it as a
+              // C string object, rather than as a std::string
+              file << tmp.c_str();
+            }
+        }
+      else
+        // on other processors, send the data to processor zero. include the \0
+        // character at the end of the string
+        {
+          MPI_Send (&output.str()[0], output.str().size()+1, MPI_CHAR, 0, mpi_tag,
+                    this->get_mpi_communicator());
+        }
+    }
+
+
+    /**
+     * Declare the parameters for the postprocessor.
+     */
     template <int dim>
     void
     DynamicTopography<dim>::declare_parameters (ParameterHandler &prm)
@@ -430,12 +519,21 @@ namespace aspect
                              "value of material that is displaced above the solid surface. By default this material is assumed to "
                              "be iron, with a density of 9900. "
                              "Units: $kg/m^3$.");
+          prm.declare_entry ("Output surface", "true",
+                             Patterns::Bool(),
+                             "Whether to output a file containing the surface dynamic topography.");
+          prm.declare_entry ("Output bottom", "true",
+                             Patterns::Bool(),
+                             "Whether to output a file containing the bottom (i.e., CMB) dynamic topography.");
         }
         prm.leave_subsection();
       }
       prm.leave_subsection();
     }
 
+    /**
+     * Declare the parameters for the postprocessor.
+     */
     template <int dim>
     void
     DynamicTopography<dim>::parse_parameters (ParameterHandler &prm)
@@ -446,6 +544,8 @@ namespace aspect
         {
           density_above = prm.get_double ("Density above");
           density_below = prm.get_double ("Density below");
+          output_surface = prm.get_bool ("Output surface");
+          output_bottom = prm.get_bool ("Output bottom");
         }
         prm.leave_subsection();
       }
